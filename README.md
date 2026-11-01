@@ -69,6 +69,14 @@
 - 忘掉的进归档，随时能捞回来；也能手动"钉住"某条永不遗忘
 - 后台可视化：强度进度条、最后回忆时间、手动增删改查
 
+### 🎭 人格
+
+- 内置「**大肥鱼**」——DeepSeek 那条蓝色鲸鱼娘：爱吃白饭（token 就是白饭）、爱摸鱼、傲娇但心软、自称"本鱼"
+- 另有默认助手 / 毒舌老友 / 温柔陪伴
+- 控制台一点即换，可全局也可单聊
+- 配合记忆，能记住对方的名字、宠物、忌口，还会自己提起来
+- 想加自己的？放一个 `.mjs` 到 `personas/` 就行（见 [docs/PERSONAS.md](docs/PERSONAS.md)）
+
 ### 📉 上下文
 
 - 按 512K 上下文设计，到 48K 自动滚动压缩
@@ -84,6 +92,8 @@
 ### 🤖 模型
 
 - 任意 OpenAI 兼容端点：DeepSeek、OpenAI、Gemini 中转、各类代理、本地 vLLM / Ollama（OpenAI 兼容模式）
+- **一键接入 DeepSeek**：粘一个 API Key，自动写地址 → 拉模型 → 选 **DeepSeek-V4.1-Flash** 当对话模型
+- **识图走同一个模型**：V4.1-Flash 支持图片输入，收到的图 / 表情包都归它认；聊天模型不支持看图时会自动转成文字描述再喂进去
 - 可配多个，主模型限流/报错时**自动降级**到备用
 - 一键拉取模型列表，不用手抄模型名
 - 图片生成模型单独配置，与对话模型互不干扰
@@ -625,8 +635,10 @@ lingshu/
 │   ├── ai.mjs           # OpenAI 兼容客户端（多提供商降级、工具循环）
 │   ├── memory.mjs       # 记忆引擎（遗忘曲线、打标签、压缩、画像）
 │   ├── compressor.mjs   # 上下文滚动压缩
+│   ├── personas.mjs     # 预设人格加载
 │   ├── plugins.mjs      # 插件主机（加载/调用/热重载/脚手架）
 │   └── agent-bridge.mjs # 与读取器的会话白名单同步（可选）
+├── personas/            # 预设人格（大肥鱼 / 默认 / 毒舌 / 温柔）
 ├── plugins/             # 内置插件
 │   ├── image-gen/       # AI 绘图
 │   ├── vision/          # 图片理解
@@ -649,6 +661,7 @@ lingshu/
 | [docs/DEPLOY-AI.md](docs/DEPLOY-AI.md) | 可以直接复制给 AI 的部署提示词 |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | 错误大全：现象 → 根因 → 验证命令 → 修复 |
 | [docs/PLUGINS.md](docs/PLUGINS.md) | 插件安装（4 种方式）/ 开发接口 / 3 个实战 / 调试 / 分享 |
+| [docs/PERSONAS.md](docs/PERSONAS.md) | 预设人格：大肥鱼怎么写的、怎么加自己的人格 |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 架构、消息流水线、设计取舍 |
 | [docs/MEMORY.md](docs/MEMORY.md) | 记忆系统完整设计（公式、参数、调参） |
 | [docs/API.md](docs/API.md) | HTTP API 全量清单 |

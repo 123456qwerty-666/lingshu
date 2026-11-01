@@ -25,6 +25,7 @@ import {
   getArchive, restoreFromArchive, rebuildProfile, addMemories, searchMemories, MEMORY_LABELS,
 } from './memory.mjs';
 import { compressContext, contextUsage } from './compressor.mjs';
+import { listPersonasBrief, getPersona } from './personas.mjs';
 import {
   initPlugins, getToolList, scaffoldPlugin, deletePlugin, reloadPlugins,
   callPluginTool, callToolByName, listAllPluginManifests,
@@ -230,10 +231,28 @@ async function processMessage(msg, config) {
 
   // 图片转 data URI（供多模态模型看图）
   if (msg.images.length) {
+    log(`图片分支：${msg.images.length} 张 / autoView=${config.wechat.media?.autoViewImages}`, 'debug');
     if (config.wechat.media?.autoViewImages === false) {
       messages = withImageNotice(messages, msg.images.length, '用户关闭了自动识图');
     } else {
-      messages = await attachImages(messages, msg.images, msg);
+      const chatModel = settings.modelId || config.ai.defaultModel;
+      const canSee = modelIsMultimodal(config, settings.providerId, chatModel);
+      const visionConfigured = Boolean(config.ai.vision?.providerId);
+      log(`图片分支：模型 ${settings.providerId}/${chatModel} canSee=${canSee} vision=${visionConfigured}`, 'debug');
+
+      if (canSee || !visionConfigured) {
+        // 聊天模型自己就能看图
+        messages = await attachImages(messages, msg.images, msg);
+      } else {
+        // 聊天模型看不见 → 交给识图模型（默认 DeepSeek-V4.1-Flash）先描述
+        const r = await describeImages(msg.images.map(i => i.id), { msg, config });
+        if (r.ok) {
+          messages = injectImageDescriptions(messages, r.descriptions, { isSticker: msg.contentType === 47 });
+          log(`聊天模型不看图，已用识图模型 ${r.provider}/${r.model || '默认'} 转成文字`);
+        } else {
+          messages = withImageNotice(messages, msg.images.length, '识图模型也不可用');
+        }
+      }
     }
   }
 
@@ -395,7 +414,7 @@ function withImageNotice(messages, count, reason) {  const out = [...messages];
 }
 
 /**
- * 把消息里的 image_ref 换成真正的 data URI。
+ * 把消息里的 image_ref 换成真正的 data URI（inline 版，聊天模型自己看得见图时用）。
  * 失败不抛错：降级成一句说明，让模型仍然能给出合理回应。
  */
 async function attachImages(messages, images, msg) {
@@ -452,6 +471,80 @@ async function attachImages(messages, images, msg) {
   return out;
 }
 
+// ── 识图：聊天模型看不见时，交给专门的识图模型（默认 DeepSeek-V4.1-Flash）──
+function modelIsMultimodal(config, providerId, modelId) {
+  const p = config.ai.providers?.[providerId];
+  if (!p) return false;
+  const m = (p.models || []).find(x => x.id === modelId);
+  if (m && typeof m.multimodal === 'boolean') return m.multimodal;
+  return /vision|4o|gemini|flash|vl\b/i.test(String(modelId || ''));
+}
+
+/** 用识图模型把图片转成文字描述 */
+async function describeImages(imageIds, { msg, config }) {
+  const reader = getReader();
+  if (!reader) return { ok: false, reason: '读取器未连接' };
+
+  const vp = config.ai.vision?.providerId || config.ai.defaultProvider;
+  const vm = config.ai.vision?.modelId || config.ai.defaultModel || undefined;
+  const descriptions = [];
+  let okCount = 0;
+
+  for (const id of imageIds) {
+    const t0 = Date.now();
+    try {
+      const data = await reader.getImage(id);
+      if (!data?.b64) { descriptions.push('（这张图读不出来）'); continue; }
+      const dataUrl = `data:${data.mime || 'image/jpeg'};base64,${data.b64}`;
+      const isSticker = msg?.contentType === 47;
+      const r = await ai.chat([
+        {
+          role: 'system',
+          content: isSticker
+            ? '你是表情包描述器。用一句中文说清这个表情想表达什么情绪或意思，20 字内，不要评价画质。'
+            : '你是图片描述器。客观描述画面内容：主体、动作、场景、以及图上的文字。中文，80 字内，不要编造看不见的细节。',
+        },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: isSticker ? '这个表情是什么意思？' : '描述这张图片。' },
+            { type: 'image_url', image_url: { url: dataUrl } },
+          ],
+        },
+      ], { providerId: vp, modelOverride: vm, maxTokens: 300, temperature: 0.3, onLog: (m, l) => log(m, l) });
+      const text = (r.content || '').trim();
+      if (text) {
+        descriptions.push(text);
+        okCount++;
+        log(`识图模型 ${r.provider}/${r.model} 已描述图片 ${id.slice(0, 8)}… (${Date.now() - t0}ms)`, 'debug');
+      } else {
+        descriptions.push('（这张图没描述出来）');
+      }
+    } catch (e) {
+      log(`识图失败 ${id.slice(0, 8)}…: ${e.message}`, 'warn');
+      descriptions.push(`（识图失败：${e.message.slice(0, 40)}）`);
+    }
+  }
+  return { ok: okCount > 0, descriptions, provider: vp, model: vm };
+}
+
+/** 把图片描述插进最后一条用户消息 */
+function injectImageDescriptions(messages, descriptions, { isSticker }) {
+  const out = [...messages];
+  const last = out[out.length - 1];
+  const label = isSticker ? '表情包' : '图片';
+  const lines = descriptions.map((d, i) => `- 第 ${i + 1} 张${label}：${d}`).join('\n');
+  const text = `【对方发来 ${descriptions.length} 张${label}，你看到的是文字描述】\n${lines}\n（这些描述由识图模型生成，你没看到原图，别说得比描述更具体。）`;
+
+  if (last && Array.isArray(last.content)) {
+    out[out.length - 1] = { ...last, content: [...last.content, { type: 'text', text }] };
+  } else if (last) {
+    out[out.length - 1] = { ...last, content: [{ type: 'text', text: String(last.content || '') + '\n' + text }] };
+  }
+  return out;
+}
+
+
 // ── HTTP 路由 ─────────────────────────────────────────────
 async function serveStatic(res, urlPath) {
   const rel = urlPath === '/' ? 'index.html' : urlPath.replace(/^\/+/, '');
@@ -469,8 +562,7 @@ async function serveStatic(res, urlPath) {
   }
 }
 
-async function serveMedia(res, urlPath) {
-  const rel = decodeURIComponent(urlPath.replace(/^\/media\/+/, ''));
+async function serveMedia(res, urlPath) {  const rel = decodeURIComponent(urlPath.replace(/^\/media\/+/, ''));
   const filePath = path.join(MEDIA_DIR, rel);
   if (!filePath.startsWith(MEDIA_DIR)) { sendJson(res, 403, { error: 'forbidden' }); return; }
   try {
@@ -480,6 +572,31 @@ async function serveMedia(res, urlPath) {
   } catch {
     sendJson(res, 404, { error: 'not found' });
   }
+}
+
+/** 拉取并写回某提供商的模型列表 */
+async function refreshProviderModels(providerId) {
+  const provider = await ai.getProvider(providerId);
+  const resp = await fetch(endpoint(provider.baseUrl, '/v1/models'), {
+    headers: { Authorization: `Bearer ${provider.apiKey}` },
+    signal: AbortSignal.timeout(20000),
+  });
+  const text = await resp.text();
+  if (!resp.ok) throw new Error(`模型列表 ${resp.status}: ${text.slice(0, 200)}`);
+  const data = JSON.parse(text);
+  const raw = data.data || data.models || [];
+  const models = raw.map(m => {
+    const id = m.id || m.name;
+    return {
+      id,
+      name: m.name || id,
+      multimodal: (m.input_modalities || []).includes('image') || /vision|4o|gemini|flash|vl\b/i.test(id),
+      imageGen: /image|dall-e|flux|sd/i.test(id),
+    };
+  });
+  if (!models.length) throw new Error('提供商没有返回任何模型');
+  await saveConfig({ ai: { providers: { [providerId]: { models } } } });
+  return models;
 }
 
 async function route(req, res) {
@@ -705,6 +822,86 @@ async function route(req, res) {
     return;
   }
 
+  // ── 一键接入 DeepSeek（填 Key 就能用）──
+  if (p === '/api/ai/quick' && method === 'POST') {
+    const body = await readJsonBody(req);
+    const apiKey = String(body.apiKey || '').trim();
+    const providerId = String(body.providerId || 'deepseek');
+    if (!apiKey) { sendJson(res, 400, { error: '请填写 API Key' }); return; }
+
+    const PRESETS = {
+      deepseek: { name: 'DeepSeek', baseUrl: 'https://api.deepseek.com', prefer: 'flash' },
+    };
+    const preset = PRESETS[providerId] || PRESETS.deepseek;
+
+    try {
+      // 1) 写入提供商
+      await saveConfig({ ai: { providers: { [providerId]: {
+        name: preset.name,
+        baseUrl: preset.baseUrl,
+        apiKey,
+        models: [],
+      } } } });
+
+      // 2) 拉模型列表（拉不到就用兜底清单）
+      let models = [];
+      let refreshError = '';
+      try {
+        models = await refreshProviderModels(providerId);
+      } catch (e) {
+        refreshError = e.message;
+        log(`快速接入：拉取模型列表失败（${e.message}），使用兜底清单`, 'warn');
+        models = [
+          { id: 'deepseek-flash', name: 'DeepSeek-V4.1-Flash', multimodal: true, imageGen: false },
+          { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro', multimodal: false, imageGen: false },
+        ];
+        await saveConfig({ ai: { providers: { [providerId]: { models } } } });
+      }
+
+      // 3) 优先选支持识图的 flash 模型
+      const preferRe = new RegExp(preset.prefer, 'i');
+      const pick = models.find(m => preferRe.test(m.id) && m.multimodal)
+        || models.find(m => m.multimodal)
+        || models.find(m => preferRe.test(m.id))
+        || models[0];
+      const visionPick = models.find(m => m.multimodal) || pick;
+
+      // 4) 设为默认 + 识图模型
+      await saveConfig({ ai: {
+        defaultProvider: providerId,
+        defaultModel: pick.id,
+        vision: { providerId, modelId: visionPick.id },
+      } });
+
+      // 5) 顺手测一下
+      let test = null;
+      try {
+        const r = await ai.chat([
+          { role: 'system', content: '只回答两个字' },
+          { role: 'user', content: '说：正常' },
+        ], { providerId, modelOverride: pick.id, maxTokens: 60 });
+        test = { ok: true, reply: (r.content || '').trim().slice(0, 20) };
+      } catch (e) {
+        test = { ok: false, error: e.message.slice(0, 160) };
+      }
+
+      log(`快速接入 ${preset.name}：默认 ${pick.id}，识图 ${visionPick.id}${test.ok ? '，连通正常' : '，测试失败'}`);
+      sendJson(res, 200, {
+        ok: true,
+        providerId,
+        provider: preset.name,
+        model: pick.id,
+        visionModel: visionPick.id,
+        models,
+        refreshError: refreshError || undefined,
+        test,
+      });
+    } catch (e) {
+      sendJson(res, 500, { error: e.message });
+    }
+    return;
+  }
+
   if (p === '/api/ai/models' && method === 'GET') {
     const provider = url.searchParams.get('provider');
     sendJson(res, 200, { models: await ai.listModels(provider) });
@@ -726,26 +923,7 @@ async function route(req, res) {
   if (p === '/api/ai/models/refresh' && method === 'POST') {
     const { providerId } = await readJsonBody(req);
     try {
-      const provider = await ai.getProvider(providerId);
-      const resp = await fetch(endpoint(provider.baseUrl, '/v1/models'), {
-        headers: { Authorization: `Bearer ${provider.apiKey}` },
-        signal: AbortSignal.timeout(20000),
-      });
-      const text = await resp.text();
-      if (!resp.ok) throw new Error(`模型列表 ${resp.status}: ${text.slice(0, 200)}`);
-      const data = JSON.parse(text);
-      const raw = data.data || data.models || [];
-      const models = raw.map(m => {
-        const id = m.id || m.name;
-        return {
-          id,
-          name: m.name || id,
-          multimodal: (m.input_modalities || []).includes('image') || /vision|4o|gemini/i.test(id),
-          imageGen: /image|dall-e|flux|sd/i.test(id),
-        };
-      });
-      if (!models.length) throw new Error('提供商没有返回任何模型');
-      await saveConfig({ ai: { providers: { [providerId]: { models } } } });
+      const models = await refreshProviderModels(providerId);
       log(`已刷新 ${providerId} 模型列表（${models.length} 个）`);
       sendJson(res, 200, { ok: true, models });
     } catch (e) { sendJson(res, 500, { error: e.message }); }
@@ -828,6 +1006,41 @@ async function route(req, res) {
     try {
       await writePluginCode(id, code);
       sendJson(res, 200, { ok: true });
+    } catch (e) { sendJson(res, 500, { error: e.message }); }
+    return;
+  }
+
+  // ── 预设人格 ──
+  if (p === '/api/personas' && method === 'GET') {
+    sendJson(res, 200, { personas: await listPersonasBrief() });
+    return;
+  }
+
+  if (p === '/api/personas/get' && method === 'GET') {
+    const id = url.searchParams.get('id');
+    const persona = await getPersona(id);
+    if (!persona) { sendJson(res, 404, { error: '人格不存在' }); return; }
+    sendJson(res, 200, { persona });
+    return;
+  }
+
+  if (p === '/api/personas/apply' && method === 'POST') {
+    const { id, talker } = await readJsonBody(req);
+    const persona = await getPersona(id);
+    if (!persona) { sendJson(res, 404, { error: '人格不存在' }); return; }
+    try {
+      if (talker) {
+        await saveConfig({ chats: { [talker]: {
+          persona: persona.prompt,
+          style: persona.style || null,
+          personaId: persona.id,
+        } } });
+        log(`聊天 ${talker} 套用预设人格：${persona.name}`);
+      } else {
+        await saveConfig({ persona: { default: persona.prompt } });
+        log(`全局人格切换为：${persona.name}`);
+      }
+      sendJson(res, 200, { ok: true, scope: talker ? 'chat' : 'global', persona: { id: persona.id, name: persona.name } });
     } catch (e) { sendJson(res, 500, { error: e.message }); }
     return;
   }

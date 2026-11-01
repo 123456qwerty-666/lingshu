@@ -37,11 +37,20 @@
 
 | 端点 | 方法 | 说明 |
 |---|---|---|
+| `/api/ai/quick` | POST | **一键接入 DeepSeek** `{apiKey, providerId?}`：写地址、拉模型、选 V4.1-Flash 作对话+识图模型，并测试连通 |
 | `/api/ai/providers` | GET | 提供商列表（含是否配 Key、是否默认/备用） |
 | `/api/ai/models?provider=` | GET | 某提供商的模型 |
 | `/api/ai/models/refresh` | POST | 拉 `GET /v1/models` 并写回配置 `{providerId}` |
 | `/api/ai/test` | POST | 测试对话 `{providerId?, model?, prompt?}` |
 | `/api/ai/providers/delete` | POST | 删除提供商 `{providerId}` |
+
+## 预设人格
+
+| 端点 | 方法 | 说明 |
+|---|---|---|
+| `/api/personas` | GET | 人格列表（id / 名称 / 标签 / 简介，不含提示词正文） |
+| `/api/personas/get?id=` | GET | 取完整定义（含 prompt） |
+| `/api/personas/apply` | POST | 套用 `{id, talker?}`；不给 talker 就是全局 |
 
 ## 工具与插件
 

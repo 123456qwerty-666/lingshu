@@ -152,8 +152,34 @@ Error: listen EADDRINUSE: address already in use 127.0.0.1:17890
 
 > ⚠️ 模型 id 会随服务商更新而变化。**不要凭记忆写死**——用灵枢的「刷新模型」自动拉取，这才是唯一可靠来源。
 
-### 4.2 标准接入流程（4 条命令）
+### 4.1.1 最快路径：一键接入 DeepSeek（推荐先试这个）
 
+用户只给了一个 DeepSeek Key 时，**不要**走下面那四条命令，直接一条：
+
+```bash
+curl -s -X POST http://127.0.0.1:17890/api/ai/quick \
+  -H 'Content-Type: application/json' \
+  -d '{"apiKey":"sk-用户给的key"}'
+```
+
+它会自动完成：
+
+1. 写入提供商（`deepseek`，baseUrl `https://api.deepseek.com`）
+2. 拉 `/v1/models` 模型列表（拉不到就用兜底清单）
+3. 优先选**支持识图的 flash 模型**（DeepSeek-V4.1-Flash）作默认对话模型
+4. 把它同时设为 `ai.vision` 识图模型
+5. 发一条测试消息验证连通
+
+返回：
+
+```json
+{"ok":true,"providerId":"deepseek","model":"deepseek-flash","visionModel":"deepseek-flash",
+ "test":{"ok":true,"reply":"正常"},"models":[...]}
+```
+
+`test.ok=false` 时不要把任务算完成，按 `test.error` 排查（401 Key 错 / 402 余额 / 网络）。
+
+### 4.2 标准接入流程（4 条命令）
 ```bash
 BASE='http://127.0.0.1:17890'
 KEY='<用户给的 key>'
@@ -208,8 +234,35 @@ curl -s -X POST $BASE/api/config -H 'Content-Type: application/json' -d '{
 
 **这是免费额度用户的救命功能，几乎一定要配。**
 
-### 4.4 接入图片生成模型（和对话模型分开配）
+### 4.4 识图模型（很重要，别漏）
 
+微信里发图片、表情包是最常见的场景。灵枢的规则：
+
+| 情况 | 行为 |
+|---|---|
+| 当前聊天模型支持图片输入（如 `deepseek-flash`） | 直接把图喂给它看 |
+| 当前聊天模型不支持图片，但配了 `ai.vision` | 先用识图模型把图转成文字描述，再喂给聊天模型 |
+| 都没配 | 模型会如实说"看不到图"（不会瞎编） |
+
+所以只要装一次，就把识图模型配上：
+
+```bash
+curl -s -X POST http://127.0.0.1:17890/api/config -H 'Content-Type: application/json' -d '{
+  "ai": {
+    "defaultProvider": "deepseek",
+    "defaultModel": "deepseek-flash",
+    "vision": { "providerId": "deepseek", "modelId": "deepseek-flash" }
+  }
+}'
+```
+
+**DeepSeek-V4.1-Flash 本身支持图片输入**，所以对话和识图可以共用它，不用再配第二个提供商。
+`/api/ai/quick` 已经自动这么设了。
+
+验证方法：往「文件传输助手」发一张图（或看日志），应该出现
+`识图模型 deepseek/deepseek-flash 已描述图片 …`，模型回复能描述画面内容。
+
+### 4.5 接入图片生成模型（和对话模型分开配）
 绘图走 `/v1/images/generations`，可以完全用另一个服务商：
 
 ```bash
@@ -240,7 +293,7 @@ curl -s -X POST https://api.example.com/v1/images/generations \
 常见坑：`n` 只能为 1、返回的是 URL 而不是 base64、耗时 10~30 秒、免费额度 429。
 这些灵枢都处理了（自动重试 4s/8s）。
 
-### 4.5 本地模型
+### 4.6 本地模型
 
 ```bash
 # Ollama
@@ -257,7 +310,7 @@ curl -s -X POST http://127.0.0.1:17890/api/config -H 'Content-Type: application/
 
 Ollama 不校验 Key，但字段不能空，随便填 `ollama`。
 
-### 4.6 模型选型建议
+### 4.7 模型选型建议
 
 | 用途 | 建议 |
 |---|---|
@@ -480,7 +533,32 @@ export function setup(ctx) {
 
 ---
 
-## 8. 阶段七：记忆与上下文（按需调）
+## 8. 阶段七：人格、记忆与上下文（按需调）
+
+### 7.1 换人格（可选，30 秒）
+
+内置 4 个人格：`dafeiyu`（大肥鱼）、`default`、`sharp-friend`（毒舌老友）、`gentle`（温柔陪伴）。
+
+```bash
+# 看有哪些
+curl -s http://127.0.0.1:17890/api/personas
+
+# 套到全局
+curl -s -X POST http://127.0.0.1:17890/api/personas/apply \
+  -H 'Content-Type: application/json' -d '{"id":"dafeiyu"}'
+
+# 只给某个聊天
+curl -s -X POST http://127.0.0.1:17890/api/personas/apply \
+  -H 'Content-Type: application/json' -d '{"id":"dafeiyu","talker":"<talker>"}'
+```
+
+**如果用户是冲着"大肥鱼"来的**（很常见，最近这个梗很火），默认就给他套 `dafeiyu`：
+它说话短、自称"本鱼"、爱吃白饭、爱摸鱼，但配合记忆能记住对方的名字/宠物/忌口。
+套完记得测一句：`POST /api/debug/send {"text":"你是谁"}`，回复里应该出现"本鱼"。
+
+想加自己的人格：见 [PERSONAS.md](PERSONAS.md)，放 `personas/xxx.mjs` 或 `data/personas/xxx.mjs`。
+
+### 7.2 记忆与上下文
 
 默认配置已经能跑。用户有特殊要求时：
 
@@ -576,12 +654,12 @@ export function setup(ctx) {
 [ ] node scripts/bootstrap.mjs   → 全绿（Key 除外）
 [ ] node server/index.mjs        → 打印控制台地址
 [ ] GET /api/health              → ok:true
-[ ] POST /api/config             → 写 provider
-[ ] POST /api/ai/models/refresh  → 拿到模型列表
-[ ] POST /api/config             → 设 defaultProvider/defaultModel
-[ ] POST /api/ai/test            → 返回正常文本
+[ ] POST /api/ai/quick           → 一键接入 DeepSeek（首选，test.ok 必须为 true）
+    （或走手动四步：config → models/refresh → config → ai/test）
+[ ] 确认 ai.vision 已指向 deepseek-flash（否则图片可能读不出来）
 [ ] POST /api/config             → 配 fallbackProviders（建议）
 [ ] GET /api/tools               → 8 个工具
+[ ] （可选）POST /api/personas/apply → 套大肥鱼等预设人格
 [ ] POST /api/chats/add          → 建测试聊天
 [ ] POST /api/debug/send         → 日志出现"已回复"
 [ ] （可选）接微信：config + reconnect + health 三绿

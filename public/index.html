@@ -219,11 +219,30 @@ input,select,textarea{font-family:var(--font)}
       <!-- AI 配置 -->
       <div class="section" id="page-ai">
         <h2 class="section-title">AI 配置</h2>
+        <div class="card" style="border-color:var(--accent)">
+          <h3>⚡ 一键接入 DeepSeek（推荐）</h3>
+          <div class="form-row">
+            <div class="form-group" style="flex:2">
+              <label>DeepSeek API Key</label>
+              <input id="quick-key" type="password" placeholder="sk-...（在 platform.deepseek.com 创建）">
+            </div>
+            <div class="form-group" style="flex:1">
+              <label>&nbsp;</label>
+              <button class="btn btn-primary" style="width:100%" onclick="quickDeepSeek()">接入</button>
+            </div>
+          </div>
+          <div class="hint">粘贴 Key 就行：自动写入地址、拉取模型、把 <b>DeepSeek-V4.1-Flash</b> 设为对话模型，并同时作为识图模型（它能看图）。</div>
+        </div>
         <div class="card">
           <h3>默认模型</h3>
           <div class="form-row">
             <div class="form-group"><label>默认提供商</label><select id="ai-default-provider" onchange="onProviderChange()"></select></div>
             <div class="form-group"><label>默认模型</label><select id="ai-default-model"></select></div>
+          </div>
+          <div class="form-group">
+            <label>识图模型（收到图片时用谁来看）</label>
+            <select id="ai-vision-model"></select>
+            <div class="hint">选「跟随对话模型」时，如果对话模型不支持图片，图片会读不出来。建议指定一个能看图的模型，比如 DeepSeek-V4.1-Flash。</div>
           </div>
           <div class="btn-group">
             <button class="btn btn-primary" onclick="saveAIDefault()">保存默认</button>
@@ -279,10 +298,24 @@ input,select,textarea{font-family:var(--font)}
           <button class="btn btn-primary" onclick="saveWechatTriggers()">保存</button>
         </div>
         <div class="card">
+          <h3>预设人格</h3>
+          <div class="form-row">
+            <div class="form-group" style="flex:2">
+              <label>选一个现成的人格</label>
+              <select id="persona-preset" onchange="previewPersona()"></select>
+            </div>
+            <div class="form-group" style="flex:1">
+              <label>&nbsp;</label>
+              <button class="btn btn-primary" style="width:100%" onclick="applyPersonaGlobal()">套用到全局</button>
+            </div>
+          </div>
+          <div class="hint" id="persona-desc">—</div>
+        </div>
+        <div class="card">
           <h3>全局人设</h3>
           <div class="form-group">
             <label>系统提示词（每个聊天可单独覆盖）</label>
-            <textarea id="wc-persona" rows="4"></textarea>
+            <textarea id="wc-persona" rows="6"></textarea>
           </div>
           <button class="btn btn-primary" onclick="savePersona()">保存人设</button>
         </div>
@@ -364,7 +397,7 @@ input,select,textarea{font-family:var(--font)}
 
 <script>
 const S = {
-  config: null, chats: [], providers: [], plugins: [], health: null,
+  config: null, chats: [], providers: [], plugins: [], personas: [], health: null,
   current: null, streamOn: false, streamCtrl: null,
 };
 
@@ -417,9 +450,55 @@ document.querySelectorAll('.nav-item').forEach(el => el.addEventListener('click'
 
 // ── 刷新 ──
 async function refreshAll() {
-  await Promise.allSettled([loadHealth(), loadPlugins(), loadProviders()]);
+  await Promise.allSettled([loadHealth(), loadPlugins(), loadProviders(), loadPersonas()]);
   await Promise.allSettled([loadConfig(), loadChats()]);
   renderDashboard();
+}
+
+// ── 预设人格 ──
+async function loadPersonas() {
+  const d = await apiSafe('/personas');
+  if (!d) return;
+  S.personas = d.personas || [];
+  const sel = document.getElementById('persona-preset');
+  if (sel) {
+    sel.innerHTML = S.personas.map(p =>
+      `<option value="${esc(p.id)}">${esc(p.emoji)} ${esc(p.name)} — ${esc((p.tags || []).join(' / '))}</option>`
+    ).join('');
+    previewPersona();
+  }
+}
+
+function previewPersona() {
+  const id = document.getElementById('persona-preset')?.value;
+  const p = (S.personas || []).find(x => x.id === id);
+  const el = document.getElementById('persona-desc');
+  if (!el) return;
+  el.innerHTML = p
+    ? `<b>${esc(p.name)}</b>：${esc(p.summary)}${p.greeting ? `<br>开场白：「${esc(p.greeting)}」` : ''}`
+    : '—';
+}
+
+async function applyPersonaGlobal() {
+  const id = document.getElementById('persona-preset').value;
+  if (!id) return;
+  if (!confirm('会覆盖当前的全局人设，继续？')) return;
+  try {
+    await api('/personas/apply', { method: 'POST', body: JSON.stringify({ id }) });
+    toast('已套用到全局', 'success');
+    await loadConfig();
+  } catch (e) { toast('失败: ' + e.message, 'error'); }
+}
+
+async function applyPersonaToChat(talker) {
+  const id = document.getElementById('cs-persona-preset').value;
+  if (!id) return;
+  try {
+    await api('/personas/apply', { method: 'POST', body: JSON.stringify({ id, talker }) });
+    toast('已套用到这个聊天', 'success');
+    await loadChats();
+    await renderSettings(talker);
+  } catch (e) { toast('失败: ' + e.message, 'error'); }
 }
 async function refreshLight() {
   await loadHealth();
@@ -497,13 +576,50 @@ function fillModelSelect() {
   sel.innerHTML = (prov?.models || []).map(m =>
     `<option value="${esc(m.id)}" ${m.id === cur ? 'selected' : ''}>${esc(m.id)}${m.multimodal ? ' 🖼' : ''}${m.imageGen ? ' 🎨' : ''}</option>`
   ).join('');
+  fillVisionSelect();
+}
+
+function fillVisionSelect() {
+  const sel = document.getElementById('ai-vision-model');
+  if (!sel) return;
+  const v = S.config?.ai?.vision || {};
+  const cur = v.providerId ? `${v.providerId}|${v.modelId}` : '';
+  const opts = ['<option value="">跟随对话模型</option>'];
+  for (const p of S.providers) {
+    for (const m of (p.models || [])) {
+      if (!m.multimodal) continue;
+      const val = `${p.id}|${m.id}`;
+      opts.push(`<option value="${esc(val)}" ${cur === val ? 'selected' : ''}>${esc(p.name)} · ${esc(m.id)}</option>`);
+    }
+  }
+  sel.innerHTML = opts.join('');
+}
+
+async function quickDeepSeek() {
+  const key = document.getElementById('quick-key').value.trim();
+  if (!key) { toast('先粘贴 DeepSeek 的 API Key', 'error'); return; }
+  toast('正在接入…', 'info');
+  try {
+    const r = await api('/ai/quick', { method: 'POST', body: JSON.stringify({ apiKey: key }) });
+    if (r.test?.ok) {
+      toast(`接入成功：对话 ${r.model}，识图 ${r.visionModel}`, 'success');
+      document.getElementById('quick-key').value = '';
+    } else {
+      toast(`已写入配置，但连通测试失败：${r.test?.error || '未知原因'}`, 'error');
+    }
+    await Promise.allSettled([loadProviders(), loadConfig()]);
+  } catch (e) { toast('接入失败: ' + e.message, 'error'); }
 }
 function onProviderChange() { fillModelSelect(); }
 async function saveAIDefault() {
   const providerId = document.getElementById('ai-default-provider').value;
   const defaultModel = document.getElementById('ai-default-model').value;
+  const vsel = document.getElementById('ai-vision-model').value;
+  const vision = vsel
+    ? { providerId: vsel.split('|')[0], modelId: vsel.split('|')[1] }
+    : { providerId: '', modelId: '' };
   try {
-    await api('/config', { method: 'POST', body: JSON.stringify({ ai: { defaultProvider: providerId, defaultModel } }) });
+    await api('/config', { method: 'POST', body: JSON.stringify({ ai: { defaultProvider: providerId, defaultModel, vision } }) });
     toast('默认模型已保存', 'success');
     await loadConfig();
   } catch (e) { toast('保存失败: ' + e.message, 'error'); }
@@ -802,6 +918,15 @@ async function renderSettings(talker) {
         ${allPlugins.map(p => `<label style="font-size:12px;color:var(--text)"><input type="checkbox" value="${esc(p.id)}" ${(c.plugins ? c.plugins.includes(p.id) : p.enabled) ? 'checked' : ''}> ${esc(p.name || p.id)}</label>`).join('') || '<span class="hint">暂无插件</span>'}
       </div>
       <div class="hint">勾选后仅这些插件的工具对该聊天可用；全勾＝跟随全局，全不勾＝该聊天禁用所有插件</div>
+    </div>
+    <div class="form-group">
+      <label>套用预设人格（会覆盖下面对话人设）</label>
+      <div style="display:flex;gap:6px">
+        <select id="cs-persona-preset" style="flex:1">
+          ${(S.personas || []).map(p => `<option value="${esc(p.id)}">${esc(p.emoji)} ${esc(p.name)}</option>`).join('')}
+        </select>
+        <button class="btn btn-sm" onclick="applyPersonaToChat('${esc(talker)}')">套用</button>
+      </div>
     </div>
     <div class="form-group">
       <label>专属人设（留空跟随全局）</label>

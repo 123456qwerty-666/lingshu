@@ -35,6 +35,11 @@ export const DEFAULT_CONFIG = {
     modelOverrides: {},
     // 主提供商被限流/报错时的降级顺序；留空则自动尝试其它所有已配置的提供商
     fallbackProviders: [],
+    /**
+     * 识图模型。留空 = 用当前聊天的模型直接看图（要求它支持图片输入）。
+     * 配了之后，如果当前聊天模型不支持图片，会先用这个模型把图描述成文字，再喂给聊天模型。
+     */
+    vision: { providerId: '', modelId: '' },
   },
   persona: {
     default: '你是一个友好、乐于助人的 AI 助手。用中文回复，简洁明了，不说教。',
