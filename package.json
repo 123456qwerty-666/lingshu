@@ -1,5 +1,5 @@
 {
-  "name": "lingshu-hub",
+  "name": "lingshu",
   "version": "0.4.0",
   "private": false,
   "type": "module",
@@ -17,13 +17,13 @@
     "微信机器人"
   ],
   "license": "MIT",
-  "homepage": "https://github.com/123456qwerty-666/lingshu-hub#readme",
+  "homepage": "https://github.com/123456qwerty-666/lingshu#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/123456qwerty-666/lingshu-hub.git"
+    "url": "git+https://github.com/123456qwerty-666/lingshu.git"
   },
   "bugs": {
-    "url": "https://github.com/123456qwerty-666/lingshu-hub/issues"
+    "url": "https://github.com/123456qwerty-666/lingshu/issues"
   },
   "engines": {
     "node": ">=20.0.0"
