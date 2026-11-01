@@ -1,0 +1,11 @@
+{
+  "id": "web-search",
+  "name": "联网搜索",
+  "version": "1.0.0",
+  "description": "让 AI 能上网搜索信息、读取网页正文（零依赖，内置 Bing/360/百度 三源自动降级）",
+  "capabilities": ["tool"],
+  "config": [
+    { "key": "engineOrder", "label": "搜索引擎顺序", "type": "string", "default": "bing,360,baidu" },
+    { "key": "maxChars", "label": "网页正文最大字符", "type": "number", "default": 4000 }
+  ]
+}

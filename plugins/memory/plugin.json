@@ -1,0 +1,1 @@
+{ "id": "memory", "name": "记忆", "version": "1.0.0", "description": "在对话中记住重要信息，供后续对话引用", "capabilities": ["tool"], "config": [] }

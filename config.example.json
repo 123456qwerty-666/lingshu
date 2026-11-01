@@ -1,0 +1,78 @@
+{
+  "app": {
+    "name": "灵枢 AI 中枢",
+    "version": "0.4.0",
+    "port": 17890,
+    "bind": "127.0.0.1"
+  },
+  "wechat": {
+    "readerUrl": "http://127.0.0.1:5031",
+    "hookUrl": "http://127.0.0.1:30001",
+    "readerToken": "",
+    "hookToken": "",
+    "account": "",
+    "ownWxid": "",
+    "botNames": ["AI"],
+    "triggerMode": "smart",
+    "wakeWords": ["AI", "灵枢", "bot"],
+    "whitelist": { "groups": [], "private": [] },
+    "reply": {
+      "maxCharsPerMessage": 500,
+      "maxMessagesPerTurn": 3,
+      "minIntervalMs": 1200
+    },
+    "media": {
+      "maxImagesPerTurn": 4,
+      "autoViewImages": true,
+      "autoSendImages": true
+    }
+  },
+  "ai": {
+    "defaultProvider": "deepseek",
+    "defaultModel": "",
+    "fallbackProviders": [],
+    "modelOverrides": {},
+    "providers": {
+      "deepseek": {
+        "name": "DeepSeek",
+        "baseUrl": "https://api.deepseek.com",
+        "apiKey": "",
+        "models": []
+      }
+    }
+  },
+  "persona": {
+    "default": "你是一个友好、乐于助人的 AI 助手。用中文回复，简洁明了，不说教。",
+    "overrides": {}
+  },
+  "plugins": {
+    "enabled": ["image-gen", "vision", "memory", "web-search"]
+  },
+  "memory": {
+    "enabled": true,
+    "autoTag": true,
+    "maxChatMemories": 120,
+    "maxMemberMemories": 60,
+    "forgetThreshold": 0.26,
+    "pinImportance": 0.85,
+    "archiveInsteadOfDelete": true,
+    "decay": {
+      "baseStabilityHours": 26,
+      "importanceExp": 4.6,
+      "accessBoost": 0.55,
+      "touchCooldownMs": 60000
+    },
+    "retrieve": { "maxChat": 8, "maxMember": 6, "minScore": 0.18 },
+    "tag": { "maxItemsPerTurn": 4, "minImportance": 0.12 },
+    "profile": { "everyN": 10 },
+    "sweepIntervalMinutes": 30
+  },
+  "context": {
+    "maxTokens": 512000,
+    "compressAtTokens": 48000,
+    "keepRecentMessages": 14,
+    "summaryMaxTokens": 700
+  },
+  "chats": {},
+  "rateLimit": { "maxPerMinute": 10, "maxPerChatPerMinute": 15 }
+}

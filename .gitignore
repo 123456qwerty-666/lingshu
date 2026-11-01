@@ -1,0 +1,27 @@
+# 运行时数据（含 API Key / 聊天记录 / 记忆，绝对不要提交）
+data/
+
+# 个人交接文档（里面有密钥和真实账号）
+交接报告.md
+
+# 本地临时文件
+*.log
+*.tmp
+_tmp*
+.env
+.env.*
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 本地开发脚本残留
+data/_*
+*.part

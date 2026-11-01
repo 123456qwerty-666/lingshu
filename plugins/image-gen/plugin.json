@@ -1,0 +1,4 @@
+{ "id": "image-gen", "name": "AI 绘图", "version": "1.0.0", "description": "调用 AI 模型生成图片，支持多种提供商", "capabilities": ["tool"], "config": [
+  { "key": "defaultProvider", "label": "默认提供商", "type": "string", "default": "", "hint": "留空使用全局默认" },
+  { "key": "defaultSize", "label": "默认尺寸", "type": "string", "default": "1024x1024" }
+]}

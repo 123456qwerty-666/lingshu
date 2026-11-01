@@ -1,0 +1,1 @@
+{ "id": "vision", "name": "图片理解", "version": "1.0.0", "description": "让 AI 查看微信中的图片", "capabilities": ["tool"], "config": [] }

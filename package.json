@@ -1,0 +1,52 @@
+{
+  "name": "lingshu-hub",
+  "version": "0.4.0",
+  "private": false,
+  "type": "module",
+  "description": "灵枢 AI 中枢 — 本机运行的微信 AI 助手平台：控制台、插件系统、带遗忘曲线的记忆、联网搜索、AI 绘图。零依赖。",
+  "keywords": [
+    "wechat",
+    "wechat-bot",
+    "ai-agent",
+    "llm",
+    "memory",
+    "forgetting-curve",
+    "plugin",
+    "openai-compatible",
+    "zero-dependency",
+    "微信机器人"
+  ],
+  "license": "MIT",
+  "homepage": "https://github.com/<your-name>/lingshu-hub#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/<your-name>/lingshu-hub.git"
+  },
+  "bugs": {
+    "url": "https://github.com/<your-name>/lingshu-hub/issues"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "setup": "node scripts/bootstrap.mjs",
+    "start": "node server/index.mjs",
+    "dev": "node server/index.mjs",
+    "check": "node --check server/index.mjs && node --check server/config.mjs && node --check server/wechat.mjs && node --check server/router.mjs && node --check server/ai.mjs && node --check server/memory.mjs && node --check server/compressor.mjs && node --check server/plugins.mjs && node --check server/agent-bridge.mjs"
+  },
+  "files": [
+    "server/",
+    "plugins/",
+    "public/",
+    "scripts/",
+    "docs/",
+    "config.example.json",
+    "start.cmd",
+    "stop.cmd",
+    "start.sh",
+    "stop.sh",
+    "README.md",
+    "AGENTS.md",
+    "LICENSE"
+  ]
+}
