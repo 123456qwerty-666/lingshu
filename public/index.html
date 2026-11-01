@@ -4,170 +4,263 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>灵枢 AI 中枢</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231f6feb'/%3E%3Ctext x='16' y='22' font-size='18' text-anchor='middle' fill='white' font-family='sans-serif'%3E枢%3C/text%3E%3C/svg%3E">
 <style>
 :root{
-  --bg:#0d1117; --surface:#161b22; --surface2:#21262d; --surface3:#2b323b; --border:#30363d;
-  --text:#e6edf3; --text2:#8b949e; --accent:#58a6ff; --accent2:#1f6feb;
-  --green:#3fb950; --red:#f85149; --yellow:#d29922; --purple:#bc8cff;
-  --radius:8px; --font:-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
+  --bg:#0b0e14; --surface:#131822; --surface2:#1b2130; --surface3:#232b3b; --border:#2a3242;
+  --text:#e8eef7; --text2:#8e9bb0; --text3:#66738a;
+  --accent:#5aa9ff; --accent2:#2f7ff0; --accent-soft:rgba(90,169,255,.14);
+  --green:#43d17a; --red:#ff6b6b; --yellow:#f0b429; --purple:#b98cff; --cyan:#3fd0d4;
+  --radius:10px; --radius-sm:7px;
+  --shadow:0 4px 16px rgba(0,0,0,.28);
+  --ring:0 0 0 3px rgba(90,169,255,.22);
+  --font:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
+  --mono:'Cascadia Code','JetBrains Mono',Consolas,'Courier New',monospace;
 }
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:14px;min-height:100vh}
-button{cursor:pointer;font-family:var(--font)}
-input,select,textarea{font-family:var(--font)}
+html,body{height:100%}
+body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased}
+button{font-family:inherit}
+input,select,textarea{font-family:inherit}
+::selection{background:rgba(90,169,255,.3)}
 
-.app{display:flex;height:100vh}
-.sidebar{width:196px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
-.sidebar-header{padding:16px;border-bottom:1px solid var(--border)}
-.sidebar-header h1{font-size:16px;color:var(--accent);letter-spacing:1px}
-.sidebar-header small{color:var(--text2);font-size:11px}
-.nav{flex:1;padding:8px;overflow-y:auto}
-.nav-item{display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:var(--radius);color:var(--text2);cursor:pointer;transition:.15s;margin-bottom:2px}
+/* 滚动条 */
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#2c3546;border-radius:6px;border:2px solid var(--bg)}
+::-webkit-scrollbar-thumb:hover{background:#3a4557}
+
+/* 布局 */
+.app{display:flex;height:100vh;overflow:hidden}
+.sidebar{width:210px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
+.brand{padding:18px 16px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
+.brand-mark{width:32px;height:32px;border-radius:9px;background:linear-gradient(135deg,var(--accent2),#6f5bff);display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;color:#fff;flex-shrink:0;box-shadow:0 2px 8px rgba(47,127,240,.35)}
+.brand-text h1{font-size:15px;font-weight:650;letter-spacing:.5px}
+.brand-text small{color:var(--text3);font-size:11px;letter-spacing:.3px}
+.nav{flex:1;padding:10px 8px;overflow-y:auto}
+.nav-item{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:var(--radius-sm);color:var(--text2);cursor:pointer;transition:background .15s,color .15s;margin-bottom:3px;font-size:13.5px;position:relative}
 .nav-item:hover{background:var(--surface2);color:var(--text)}
-.nav-item.active{background:var(--accent2);color:#fff}
-.nav-item .icon{width:20px;text-align:center}
-.main{flex:1;display:flex;flex-direction:column;overflow:hidden}
-.topbar{height:48px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 18px;gap:14px;flex-shrink:0;font-size:13px}
-.dot{width:8px;height:8px;border-radius:50%;display:inline-block}
-.dot.green{background:var(--green);box-shadow:0 0 6px var(--green)}
-.dot.red{background:var(--red)}
-.dot.yellow{background:var(--yellow)}
-.status{display:flex;align-items:center;gap:6px;color:var(--text2)}
-.content{flex:1;overflow-y:auto;padding:18px}
+.nav-item.active{background:var(--accent-soft);color:var(--accent);font-weight:550}
+.nav-item.active::before{content:'';position:absolute;left:0;top:9px;bottom:9px;width:3px;border-radius:0 3px 3px 0;background:var(--accent)}
+.nav-item .icon{width:18px;text-align:center;font-size:14px}
+.nav-item .badge{margin-left:auto;font-size:10px;padding:1px 6px;border-radius:9px;background:var(--surface3);color:var(--text2)}
+.sidebar-foot{padding:10px 14px;border-top:1px solid var(--border);font-size:11px;color:var(--text3)}
 
-.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:14px}
-.card h3{font-size:14px;margin-bottom:12px;color:var(--accent);display:flex;align-items:center;gap:8px}
-.card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+.topbar{height:52px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 18px;gap:10px;flex-shrink:0}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:20px;background:var(--surface2);border:1px solid var(--border);font-size:12px;color:var(--text2);white-space:nowrap}
+.pill.ok{border-color:rgba(67,209,122,.35);background:rgba(67,209,122,.1);color:var(--green)}
+.pill.bad{border-color:rgba(255,107,107,.35);background:rgba(255,107,107,.1);color:var(--red)}
+.pulse{width:7px;height:7px;border-radius:50%;background:var(--text3)}
+.pill.ok .pulse{background:var(--green);box-shadow:0 0 6px var(--green);animation:breathe 2.4s ease-in-out infinite}
+.pill.bad .pulse{background:var(--red)}
+@keyframes breathe{0%,100%{opacity:1}50%{opacity:.45}}
+.spacer{flex:1}
+.content{flex:1;overflow-y:auto;padding:20px 22px 40px}
 
+/* 卡片 */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;margin-bottom:14px;box-shadow:var(--shadow)}
+.card>h3{font-size:13.5px;font-weight:600;color:var(--text);margin-bottom:12px;display:flex;align-items:center;gap:8px;letter-spacing:.2px}
+.card>h3::before{content:'';width:3px;height:13px;border-radius:2px;background:var(--accent)}
+.card>h3 .hint{margin-left:auto;font-weight:400}
+.card.accent{border-color:rgba(90,169,255,.4);background:linear-gradient(180deg,rgba(90,169,255,.06),transparent 60%)}
+.card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px}
+
+.stat{padding:15px 16px}
+.stat .k{font-size:11.5px;color:var(--text2);letter-spacing:.4px;display:flex;align-items:center;gap:6px}
+.stat .v{font-size:26px;font-weight:650;line-height:1.25;margin-top:4px;letter-spacing:-.5px}
+.stat .v small{font-size:12px;font-weight:400;color:var(--text3);margin-left:4px}
+.stat .s{font-size:11.5px;color:var(--text3);margin-top:2px}
+.stat.green .v{color:var(--green)} .stat.blue .v{color:var(--accent)}
+.stat.yellow .v{color:var(--yellow)} .stat.purple .v{color:var(--purple)}
+
+/* 表单 */
 .form-group{margin-bottom:12px}
-.form-group label{display:block;font-size:12px;color:var(--text2);margin-bottom:4px}
-.form-group input,.form-group select,.form-group textarea{width:100%;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:13px}
-.form-group input:focus,.form-group select:focus,.form-group textarea:focus{outline:none;border-color:var(--accent)}
-.form-group textarea{resize:vertical;line-height:1.5}
-.form-row{display:flex;gap:10px}
-.form-row .form-group{flex:1}
-.hint{font-size:11px;color:var(--text2);margin-top:4px;line-height:1.5}
+.form-group>label{display:block;font-size:12px;color:var(--text2);margin-bottom:5px;letter-spacing:.2px}
+.form-group input,.form-group select,.form-group textarea,
+input.ctl,select.ctl,textarea.ctl{width:100%;padding:8px 11px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:13px;transition:border-color .15s,box-shadow .15s}
+.form-group input:focus,.form-group select:focus,.form-group textarea:focus,
+.ctl:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring)}
+.form-group textarea,.ctl{resize:vertical;line-height:1.55}
+.form-group input::placeholder,.ctl::placeholder{color:var(--text3)}
+.form-group input[type=checkbox],input[type=checkbox].cbx{width:auto;margin-right:6px;vertical-align:-1px;accent-color:var(--accent2)}
+.form-row{display:flex;gap:10px;flex-wrap:wrap}
+.form-row>.form-group{flex:1;min-width:130px}
+.checkline{display:flex;align-items:center;font-size:13px;color:var(--text);cursor:pointer;user-select:none}
+.hint{font-size:11.5px;color:var(--text2);line-height:1.6}
+.hint.dim{color:var(--text3)}
 
-.btn{padding:7px 13px;border-radius:var(--radius);border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:13px;transition:.15s}
-.btn:hover{border-color:var(--accent);color:var(--accent)}
-.btn-primary{background:var(--accent2);border-color:var(--accent2);color:#fff}
-.btn-primary:hover{background:#388bfd;color:#fff}
-.btn-danger{background:transparent;border-color:var(--red);color:var(--red)}
-.btn-danger:hover{background:var(--red);color:#fff}
-.btn-sm{padding:4px 9px;font-size:12px}
-.btn:disabled{opacity:.45;cursor:not-allowed}
+/* 按钮 */
+.btn{padding:7px 14px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:13px;transition:all .15s;white-space:nowrap}
+.btn:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+.btn:active{transform:translateY(1px)}
+.btn:focus-visible{outline:none;box-shadow:var(--ring)}
+.btn-primary{background:var(--accent2);border-color:var(--accent2);color:#fff;font-weight:550}
+.btn-primary:hover{background:#4b8ff5;border-color:#4b8ff5;color:#fff}
+.btn-danger{background:transparent;border-color:rgba(255,107,107,.45);color:var(--red)}
+.btn-danger:hover{background:var(--red);border-color:var(--red);color:#fff}
+.btn-ghost{background:transparent}
+.btn-sm{padding:4px 10px;font-size:12px}
+.btn:disabled{opacity:.45;cursor:not-allowed;transform:none}
 .btn-group{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 
-.tag{display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;background:var(--surface2);color:var(--text2);border:1px solid var(--border)}
-.tag-green{background:rgba(63,185,80,.15);color:var(--green);border-color:var(--green)}
-.tag-red{background:rgba(248,81,73,.15);color:var(--red);border-color:var(--red)}
-.tag-yellow{background:rgba(210,153,34,.15);color:var(--yellow);border-color:var(--yellow)}
-.tag-blue{background:rgba(88,166,255,.15);color:var(--accent);border-color:var(--accent)}
-.tag-purple{background:rgba(188,140,255,.15);color:var(--purple);border-color:var(--purple)}
+/* 标签 */
+.tag{display:inline-block;padding:2px 8px;border-radius:11px;font-size:11px;background:var(--surface2);color:var(--text2);border:1px solid var(--border);white-space:nowrap}
+.tag-green{background:rgba(67,209,122,.13);color:var(--green);border-color:rgba(67,209,122,.3)}
+.tag-red{background:rgba(255,107,107,.13);color:var(--red);border-color:rgba(255,107,107,.3)}
+.tag-yellow{background:rgba(240,180,41,.13);color:var(--yellow);border-color:rgba(240,180,41,.3)}
+.tag-blue{background:rgba(90,169,255,.13);color:var(--accent);border-color:rgba(90,169,255,.3)}
+.tag-purple{background:rgba(185,140,255,.13);color:var(--purple);border-color:rgba(185,140,255,.3)}
+.tag-cyan{background:rgba(63,208,212,.13);color:var(--cyan);border-color:rgba(63,208,212,.3)}
 
-.section{display:none}
+.section{display:none;animation:fade .18s ease}
 .section.active{display:block}
-.section-title{font-size:18px;margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+@keyframes fade{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
+.section-title{font-size:19px;font-weight:600;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid var(--border);letter-spacing:.3px}
+.section-title .hint{font-weight:400;font-size:12px;margin-left:8px}
 
-/* 聊天三栏 */
-.chats-layout{display:flex;gap:14px;height:calc(100vh - 108px);min-height:420px}
-.col-left{width:280px;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
-.col-mid{flex:1;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;min-width:0}
-.col-right{width:300px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow-y:auto;padding:14px}
-.col-head{padding:10px 12px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text2);display:flex;justify-content:space-between;align-items:center}
-.search-box{padding:10px;border-bottom:1px solid var(--border);display:flex;gap:6px}
-.search-box input{flex:1;padding:7px 9px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px}
-.chat-list{flex:1;overflow-y:auto}
-.chat-item{padding:9px 12px;border-bottom:1px solid var(--border);cursor:pointer;display:flex;justify-content:space-between;gap:8px}
+/* 三栏 */
+.split{display:flex;gap:14px;height:calc(100vh - 116px);min-height:440px}
+.col{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);display:flex;flex-direction:column;overflow:hidden}
+.col-left{width:290px;flex-shrink:0}
+.col-mid{flex:1;min-width:0}
+.col-right{width:310px;flex-shrink:0;overflow-y:auto}
+.col-head{padding:11px 13px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text2);display:flex;justify-content:space-between;align-items:center;gap:8px;flex-shrink:0;background:var(--surface)}
+.col-head .t{color:var(--text);font-weight:550;font-size:13px}
+.search-box{padding:10px;border-bottom:1px solid var(--border);display:flex;gap:6px;flex-shrink:0}
+.search-box input{flex:1;padding:7px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:13px;min-width:0}
+.search-box input:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring)}
+.list{flex:1;overflow-y:auto}
+.chat-item{padding:10px 13px;border-bottom:1px solid var(--border);cursor:pointer;display:flex;justify-content:space-between;gap:10px;transition:background .13s}
 .chat-item:hover{background:var(--surface2)}
-.chat-item.active{background:rgba(31,111,235,.25);border-left:3px solid var(--accent)}
+.chat-item.active{background:var(--accent-soft);box-shadow:inset 3px 0 0 var(--accent)}
 .chat-item .name{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.chat-item .sub{font-size:11px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chat-item .sub{font-size:11px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
 .chat-item .right{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0}
+.chat-item.noclick{cursor:default}
+.chat-item.noclick:hover{background:transparent}
 
+/* 消息 */
 .messages{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px}
-.msg{max-width:76%;padding:8px 12px;border-radius:12px;font-size:13px;line-height:1.55;word-break:break-word;white-space:pre-wrap}
+.msg{max-width:78%;padding:8px 12px;border-radius:13px;font-size:13px;line-height:1.6;word-break:break-word;white-space:pre-wrap}
 .msg.in{background:var(--surface2);align-self:flex-start;border-bottom-left-radius:4px}
-.msg.out{background:var(--accent2);align-self:flex-end;border-bottom-right-radius:4px;color:#fff}
+.msg.out{background:linear-gradient(135deg,var(--accent2),#3d6ee0);align-self:flex-end;border-bottom-right-radius:4px;color:#fff}
 .msg .meta{font-size:10px;opacity:.65;margin-top:4px}
-.input-area{padding:10px;border-top:1px solid var(--border);display:flex;gap:8px}
-.input-area input{flex:1;padding:9px 11px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:13px}
+.input-area{padding:10px;border-top:1px solid var(--border);display:flex;gap:8px;flex-shrink:0;background:var(--surface)}
+.input-area input{flex:1;padding:9px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:13px}
+.input-area input:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring)}
 
-.msg-center{text-align:center;padding:30px;color:var(--text2);font-size:13px}
-.log-list{max-height:none;overflow-y:auto;font-family:'Cascadia Code',Consolas,monospace;font-size:12px}
-.log-entry{padding:3px 0;border-bottom:1px solid rgba(48,54,61,.5);display:flex;gap:8px;line-height:1.5}
-.log-entry .ts{color:var(--text2);flex-shrink:0}
-.lvl-info{color:var(--accent)} .lvl-warn{color:var(--yellow)} .lvl-error{color:var(--red)} .lvl-debug{color:var(--text2)}
+.empty{text-align:center;padding:34px 18px;color:var(--text3);font-size:13px;line-height:1.8}
+.empty .big{font-size:26px;display:block;margin-bottom:6px;opacity:.5}
 
-.plugin-card{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+/* 日志 */
+.log-list{font-family:var(--mono);font-size:12px}
+.log-entry{padding:4px 0;border-bottom:1px solid rgba(42,50,66,.55);display:flex;gap:8px;line-height:1.6;align-items:flex-start}
+.log-entry .ts{color:var(--text3);flex-shrink:0}
+.log-entry .lv{flex-shrink:0;width:52px}
+.log-entry .tx{word-break:break-word;flex:1}
+.lvl-info{color:var(--accent)} .lvl-warn{color:var(--yellow)} .lvl-error{color:var(--red)} .lvl-debug{color:var(--text3)}
+
+/* 插件 / 提供商 */
+.plugin-card{display:flex;justify-content:space-between;align-items:flex-start;gap:14px}
 .plugin-info h4{font-size:14px;margin-bottom:4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.plugin-info p{font-size:12px;color:var(--text2);line-height:1.5}
+.plugin-info p{font-size:12px;color:var(--text2);line-height:1.6}
+.provider-card{border:1px solid var(--border);border-radius:var(--radius);padding:15px;margin-bottom:12px;background:var(--surface);box-shadow:var(--shadow)}
+.provider-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:10px;flex-wrap:wrap}
+.provider-header h4{color:var(--accent);font-size:14px;display:flex;align-items:center;gap:8px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
 
-.toggle{position:relative;width:40px;height:22px;flex-shrink:0}
+/* 开关 */
+.toggle{position:relative;width:42px;height:23px;flex-shrink:0}
 .toggle input{opacity:0;width:0;height:0}
-.toggle .slider{position:absolute;inset:0;background:var(--surface2);border-radius:11px;border:1px solid var(--border);cursor:pointer;transition:.2s}
-.toggle .slider:before{content:'';position:absolute;width:16px;height:16px;left:2px;top:2px;background:var(--text2);border-radius:50%;transition:.2s}
+.toggle .slider{position:absolute;inset:0;background:var(--surface3);border-radius:12px;border:1px solid var(--border);cursor:pointer;transition:.2s}
+.toggle .slider:before{content:'';position:absolute;width:17px;height:17px;left:2px;top:2px;background:var(--text3);border-radius:50%;transition:.2s}
 .toggle input:checked + .slider{background:var(--accent2);border-color:var(--accent2)}
-.toggle input:checked + .slider:before{transform:translateX(18px);background:#fff}
+.toggle input:checked + .slider:before{transform:translateX(19px);background:#fff}
 
-.provider-card{border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:12px;background:var(--surface)}
-.provider-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:10px}
-.provider-header h4{color:var(--accent);font-size:14px}
-.model-chips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+/* 弹窗 */
+.modal-overlay{position:fixed;inset:0;background:rgba(4,7,12,.72);backdrop-filter:blur(3px);display:none;align-items:center;justify-content:center;z-index:1000;padding:20px}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:22px;width:min(660px,100%);max-height:84vh;overflow-y:auto;box-shadow:0 24px 60px rgba(0,0,0,.5);animation:pop .16s ease}
+@keyframes pop{from{opacity:0;transform:scale(.97) translateY(6px)}to{opacity:1;transform:none}}
+.modal h3{margin-bottom:15px;color:var(--text);font-size:15px}
+.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
 
-.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);display:none;align-items:center;justify-content:center;z-index:1000;padding:20px}
-.modal{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;width:min(640px,100%);max-height:82vh;overflow-y:auto}
-.modal h3{margin-bottom:14px;color:var(--accent)}
-.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
-
-.toast-container{position:fixed;top:16px;right:16px;z-index:2000;display:flex;flex-direction:column;gap:8px}
-.toast{padding:10px 16px;border-radius:var(--radius);font-size:13px;border:1px solid var(--border);background:var(--surface);animation:slideIn .18s}
-.toast.success{border-color:var(--green);color:var(--green)}
-.toast.error{border-color:var(--red);color:var(--red)}
-.toast.info{border-color:var(--accent);color:var(--accent)}
+/* Toast */
+.toast-container{position:fixed;top:16px;right:16px;z-index:2000;display:flex;flex-direction:column;gap:8px;max-width:380px}
+.toast{padding:10px 15px;border-radius:var(--radius-sm);font-size:13px;border:1px solid var(--border);background:var(--surface);box-shadow:var(--shadow);animation:slideIn .2s ease;line-height:1.5}
+.toast.success{border-color:rgba(67,209,122,.5);color:var(--green)}
+.toast.error{border-color:rgba(255,107,107,.5);color:var(--red)}
+.toast.info{border-color:rgba(90,169,255,.5);color:var(--accent)}
 @keyframes slideIn{from{transform:translateX(120%);opacity:0}to{transform:translateX(0);opacity:1}}
+
+/* 进度条 */
+.bar{height:5px;background:var(--surface3);border-radius:3px;overflow:hidden}
+.bar>span{display:block;height:100%;border-radius:3px;transition:width .3s}
+
+.mem-card{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:11px 13px}
+.mem-card .txt{font-size:13px;line-height:1.6;word-break:break-word}
+.mem-actions{display:flex;flex-direction:column;gap:5px;flex-shrink:0}
+
+.kv{display:flex;justify-content:space-between;gap:10px;font-size:12.5px;padding:3px 0}
+.kv span:first-child{color:var(--text2)}
+.divider{height:1px;background:var(--border);margin:14px 0}
+
+@media (max-width:1180px){
+  .col-right{width:270px}
+  .col-left{width:250px}
+}
 </style>
 </head>
 <body>
 <div class="app">
   <aside class="sidebar">
-    <div class="sidebar-header">
-      <h1>灵枢</h1>
-      <small>AI 中枢 v0.2</small>
+    <div class="brand">
+      <div class="brand-mark">枢</div>
+      <div class="brand-text">
+        <h1>灵枢</h1>
+        <small>AI 中枢 v0.4</small>
+      </div>
     </div>
     <nav class="nav">
       <div class="nav-item active" data-page="dashboard"><span class="icon">📊</span><span>概览</span></div>
-      <div class="nav-item" data-page="chats"><span class="icon">💬</span><span>聊天</span></div>
-      <div class="nav-item" data-page="memory"><span class="icon">🧠</span><span>记忆</span></div>
+      <div class="nav-item" data-page="chats"><span class="icon">💬</span><span>聊天</span><span class="badge" id="nav-chats">0</span></div>
+      <div class="nav-item" data-page="memory"><span class="icon">🧠</span><span>记忆</span><span class="badge" id="nav-mem">0</span></div>
       <div class="nav-item" data-page="ai"><span class="icon">🤖</span><span>AI 配置</span></div>
       <div class="nav-item" data-page="wechat"><span class="icon">💚</span><span>微信设置</span></div>
       <div class="nav-item" data-page="plugins"><span class="icon">🧩</span><span>插件</span></div>
       <div class="nav-item" data-page="logs"><span class="icon">📋</span><span>日志</span></div>
     </nav>
+    <div class="sidebar-foot">零依赖 · 本地运行</div>
   </aside>
 
   <div class="main">
     <div class="topbar">
-      <div class="status"><span class="dot" id="dotWx"></span><span id="txtWx">微信</span></div>
-      <div class="status"><span class="dot" id="dotSse"></span><span id="txtSse">推送</span></div>
-      <div class="status"><span class="dot" id="dotHook"></span><span id="txtHook">发送</span></div>
-      <div style="flex:1"></div>
-      <span class="tag" id="statTag">收 0 / 发 0</span>
+      <span class="pill" id="pillWx"><span class="pulse"></span><span id="txtWx">微信</span></span>
+      <span class="pill" id="pillSse"><span class="pulse"></span><span id="txtSse">推送</span></span>
+      <span class="pill" id="pillHook"><span class="pulse"></span><span id="txtHook">发送</span></span>
+      <div class="spacer"></div>
+      <span class="pill" id="statTag">收 0 / 发 0 / 跳过 0</span>
       <button class="btn btn-sm" onclick="refreshAll()">刷新</button>
     </div>
 
     <div class="content">
       <!-- 概览 -->
       <div class="section active" id="page-dashboard">
-        <h2 class="section-title">概览</h2>
-        <div class="card-grid">
-          <div class="card"><h3>连接状态</h3><div id="dash-conn">—</div></div>
-          <div class="card"><h3>收发统计</h3><div id="dash-stats">—</div></div>
-          <div class="card"><h3>插件</h3><div id="dash-plugins">—</div></div>
-          <div class="card"><h3>已接入聊天</h3><div id="dash-chats">—</div></div>
+        <h2 class="section-title">概览<span class="hint" id="dash-updated"></span></h2>
+        <div class="card-grid" style="margin-bottom:14px">
+          <div class="card stat blue"><div class="k">📥 收到消息</div><div class="v" id="st-recv">0</div><div class="s">微信推送进来、进入处理的条数</div></div>
+          <div class="card stat green"><div class="k">📤 发出消息</div><div class="v" id="st-sent">0</div><div class="s">通过 Hook 成功发出的条数</div></div>
+          <div class="card stat yellow"><div class="k">⏭️ 跳过消息</div><div class="v" id="st-skip">0</div><div class="s" id="st-skip-reason">未触发 / 自己发的 / 限流</div></div>
+          <div class="card stat purple"><div class="k">💬 已接入聊天</div><div class="v" id="st-chats">0</div><div class="s" id="st-chats-sub">在「聊天」页添加</div></div>
         </div>
+
         <div class="card">
-          <h3>立即自检 <span class="hint">（走完整链路：解析 → 触发 → 模型 → 发送）</span></h3>
+          <h3>连接状态<span class="hint">Reader 读消息 · SSE 收推送 · Hook 发消息</span></h3>
+          <div id="dash-conn">—</div>
+        </div>
+
+        <div class="card accent">
+          <h3>⚡ 立即自检<span class="hint">走完整链路：解析 → 触发 → 模型 → 发送</span></h3>
           <div class="form-row">
             <div class="form-group" style="flex:2">
               <label>发给哪个聊天</label>
@@ -178,61 +271,121 @@ input,select,textarea{font-family:var(--font)}
               <input id="debug-text" value="灵枢自检：你现在能收到消息吗？" onkeydown="if(event.key==='Enter')runDebug()">
             </div>
           </div>
-          <button class="btn btn-primary" onclick="runDebug()">发送自检</button>
-          <div class="hint">注意：自检是"模拟收到"，不会在微信里留下入站消息，但回复会真的发出去。</div>
+          <div class="btn-group">
+            <button class="btn btn-primary" onclick="runDebug()">发送自检</button>
+            <span class="hint dim">自检是「模拟收到」，不会在微信里留下入站消息，但回复会真的发出去。</span>
+          </div>
         </div>
+
         <div class="card">
-          <h3>最近日志</h3>
+          <h3>最近日志<span class="hint"><a href="#" onclick="activatePage('logs');return false" style="color:var(--accent)">查看全部 →</a></span></h3>
           <div class="log-list" id="dash-logs"></div>
         </div>
       </div>
 
       <!-- 聊天 -->
       <div class="section" id="page-chats">
-        <div class="chats-layout">
-          <div class="col-left">
+        <div class="split">
+          <div class="col col-left">
             <div class="search-box">
-              <input id="chat-search" placeholder="搜索微信好友/群…" onkeydown="if(event.key==='Enter')doSearch()">
+              <input id="chat-search" placeholder="搜索微信好友 / 群…" onkeydown="if(event.key==='Enter')doSearch()">
               <button class="btn btn-sm" onclick="doSearch()">搜</button>
             </div>
-            <div class="col-head"><span>已接入聊天</span><span id="chat-count">0</span></div>
-            <div class="chat-list" id="chat-list"></div>
+            <div class="col-head"><span class="t">已接入聊天</span><span class="tag" id="chat-count">0</span></div>
+            <div class="list" id="chat-list"></div>
             <div id="search-results"></div>
           </div>
-          <div class="col-mid">
-            <div class="col-head"><span id="chat-title">未选择聊天</span><span class="btn-group"></span></div>
+          <div class="col col-mid">
+            <div class="col-head"><span class="t" id="chat-title">未选择聊天</span><span class="btn-group"></span></div>
             <div class="messages" id="messages">
-              <div class="msg-center">左侧选择或搜索添加一个聊天</div>
+              <div class="empty"><span class="big">💬</span>左侧选择或搜索添加一个聊天</div>
             </div>
             <div class="input-area">
               <input id="manual-input" placeholder="手动发一条微信消息…" onkeydown="if(event.key==='Enter')sendManual()">
               <button class="btn" onclick="sendManual()">发送</button>
-              <button class="btn" onclick="reloadHistory()">刷新</button>
+              <button class="btn btn-ghost" onclick="reloadHistory()">刷新</button>
             </div>
           </div>
-          <div class="col-right" id="chat-settings">
-            <div class="msg-center">选择聊天后在这里配置</div>
+          <div class="col col-right" id="chat-settings">
+            <div class="empty"><span class="big">⚙️</span>选择聊天后在这里配置</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 记忆 -->
+      <div class="section" id="page-memory">
+        <h2 class="section-title">记忆<span class="hint">自动打标签 · 遗忘曲线 · 群成员专属记忆</span></h2>
+        <div class="card-grid" style="margin-bottom:14px">
+          <div class="card stat"><div class="k">🧠 记忆总量</div><div class="v" id="mem-total">0</div><div class="s" id="mem-total-sub">会话 + 成员</div></div>
+          <div class="card stat yellow"><div class="k">📉 即将遗忘</div><div class="v" id="mem-fading">0</div><div class="s">记忆强度已跌破 40%</div></div>
+          <div class="card stat green"><div class="k">📌 已钉住</div><div class="v" id="mem-pinned">0</div><div class="s">永不自动遗忘</div></div>
+          <div class="card">
+            <h3>维护</h3>
+            <div class="btn-group">
+              <button class="btn btn-sm" onclick="memForget(true)">预演遗忘</button>
+              <button class="btn btn-sm btn-primary" onclick="memForget(false)">执行遗忘</button>
+              <button class="btn btn-sm" onclick="memSweep()">全库巡检</button>
+            </div>
+            <div class="hint dim" id="mem-lastop" style="margin-top:8px">—</div>
+          </div>
+        </div>
+
+        <div class="split" style="height:calc(100vh - 330px)">
+          <div class="col col-left">
+            <div class="col-head"><span class="t">有记忆的会话</span><span class="tag" id="mem-scope-count">0</span></div>
+            <div class="list" id="mem-scope-list"></div>
+          </div>
+          <div class="col col-mid">
+            <div class="col-head">
+              <span class="t" id="mem-title">未选择会话</span>
+              <span class="btn-group">
+                <button class="btn btn-sm" onclick="memDedupe()">整理重复</button>
+                <button class="btn btn-sm" onclick="memCompact()">压缩记忆</button>
+                <button class="btn btn-sm btn-danger" onclick="memClear()">清空</button>
+                <button class="btn btn-sm btn-ghost" onclick="memReload()">刷新</button>
+              </span>
+            </div>
+            <div style="padding:8px 12px;border-bottom:1px solid var(--border);display:flex;gap:6px;flex-wrap:wrap" id="mem-tabs"></div>
+            <div style="padding:10px 12px;border-bottom:1px solid var(--border);display:flex;gap:6px">
+              <input id="mem-search" placeholder="在记忆里搜索…" style="flex:1;padding:7px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:13px;min-width:0" onkeydown="if(event.key==='Enter')memSearch()">
+              <button class="btn btn-sm" onclick="memSearch()">搜</button>
+              <button class="btn btn-sm btn-ghost" onclick="memClearSearch()">清</button>
+            </div>
+            <div class="messages" id="mem-list" style="gap:8px"></div>
+          </div>
+          <div class="col col-right" id="mem-side">
+            <div class="empty"><span class="big">🧠</span>左侧选择会话</div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:14px">
+          <h3>遗忘曲线怎么算的</h3>
+          <div class="hint">
+            留存率 <b>R = e<sup>−Δt/S</sup></b>，稳定性 S 由「重要度」指数放大、每被回忆一次再对数增益。<br>
+            琐碎 ≈ 3 天淡忘 · 一般 ≈ 2 周 · 重要 ≈ 1 个月 · 非常重要 ≈ 永久。<br>
+            被遗忘不等于删除 —— 先进归档，「归档」标签页里随时能捞回来；重要度 ≥ 0.85 或手动钉住的事永不遗忘。
           </div>
         </div>
       </div>
 
       <!-- AI 配置 -->
       <div class="section" id="page-ai">
-        <h2 class="section-title">AI 配置</h2>
-        <div class="card" style="border-color:var(--accent)">
+        <h2 class="section-title">AI 配置<span class="hint">任何 OpenAI 兼容接口都能接</span></h2>
+        <div class="card accent">
           <h3>⚡ 一键接入 DeepSeek（推荐）</h3>
           <div class="form-row">
-            <div class="form-group" style="flex:2">
+            <div class="form-group" style="flex:3">
               <label>DeepSeek API Key</label>
               <input id="quick-key" type="password" placeholder="sk-...（在 platform.deepseek.com 创建）">
             </div>
-            <div class="form-group" style="flex:1">
+            <div class="form-group" style="flex:1;min-width:110px">
               <label>&nbsp;</label>
               <button class="btn btn-primary" style="width:100%" onclick="quickDeepSeek()">接入</button>
             </div>
           </div>
-          <div class="hint">粘贴 Key 就行：自动写入地址、拉取模型、把 <b>DeepSeek-V4.1-Flash</b> 设为对话模型，并同时作为识图模型（它能看图）。</div>
+          <div class="hint">粘贴 Key 就行：自动写入地址、拉取模型列表、把 <b>DeepSeek-V4.1-Flash</b> 设为对话模型，并同时作为识图模型（它能看图）。</div>
         </div>
+
         <div class="card">
           <h3>默认模型</h3>
           <div class="form-row">
@@ -242,14 +395,15 @@ input,select,textarea{font-family:var(--font)}
           <div class="form-group">
             <label>识图模型（收到图片时用谁来看）</label>
             <select id="ai-vision-model"></select>
-            <div class="hint">选「跟随对话模型」时，如果对话模型不支持图片，图片会读不出来。建议指定一个能看图的模型，比如 DeepSeek-V4.1-Flash。</div>
+            <div class="hint">选「跟随对话模型」时，如果对话模型不支持图片，图片就读不出来。建议指定一个能看图的模型，比如 DeepSeek-V4.1-Flash。</div>
           </div>
           <div class="btn-group">
             <button class="btn btn-primary" onclick="saveAIDefault()">保存默认</button>
             <button class="btn" onclick="testAIDefault()">测试连通</button>
           </div>
-          <div class="hint">主模型被限流 / 报错时会自动降级到其它已配置提供商（优先用上次成功的那个），降级过程会写进日志。</div>
+          <div class="hint dim">主模型被限流 / 报错时会自动降级到其它已配置提供商（优先用上次成功的那个），降级过程会写进日志。</div>
         </div>
+
         <div id="providers-container"></div>
         <button class="btn" onclick="showAddProvider()">+ 添加提供商</button>
       </div>
@@ -269,6 +423,7 @@ input,select,textarea{font-family:var(--font)}
             <button class="btn" onclick="reconnectWechat()">重新连接</button>
           </div>
         </div>
+
         <div class="card">
           <h3>触发规则</h3>
           <div class="form-row">
@@ -286,6 +441,7 @@ input,select,textarea{font-family:var(--font)}
           </div>
           <div class="form-group"><label>机器人在微信里的昵称（群聊 @ 识别用，逗号分隔）</label><input id="wc-bot-names" placeholder="AI"></div>
         </div>
+
         <div class="card">
           <h3>回复与媒体</h3>
           <div class="form-row">
@@ -293,10 +449,11 @@ input,select,textarea{font-family:var(--font)}
             <div class="form-group"><label>每轮最多条数</label><input id="wc-max-msgs" type="number"></div>
             <div class="form-group"><label>条间隔(ms)</label><input id="wc-interval" type="number"></div>
           </div>
-          <div class="form-group"><label><input type="checkbox" id="wc-auto-view"> 自动识别来信图片（多模态）</label></div>
-          <div class="form-group"><label><input type="checkbox" id="wc-auto-send"> 工具生成的图片自动发到聊天</label></div>
+          <div class="form-group"><label class="checkline"><input type="checkbox" id="wc-auto-view"> 自动识别来信图片（多模态）</label></div>
+          <div class="form-group"><label class="checkline"><input type="checkbox" id="wc-auto-send"> 工具生成的图片自动发到聊天</label></div>
           <button class="btn btn-primary" onclick="saveWechatTriggers()">保存</button>
         </div>
+
         <div class="card">
           <h3>预设人格</h3>
           <div class="form-row">
@@ -304,13 +461,14 @@ input,select,textarea{font-family:var(--font)}
               <label>选一个现成的人格</label>
               <select id="persona-preset" onchange="previewPersona()"></select>
             </div>
-            <div class="form-group" style="flex:1">
+            <div class="form-group" style="flex:1;min-width:110px">
               <label>&nbsp;</label>
               <button class="btn btn-primary" style="width:100%" onclick="applyPersonaGlobal()">套用到全局</button>
             </div>
           </div>
           <div class="hint" id="persona-desc">—</div>
         </div>
+
         <div class="card">
           <h3>全局人设</h3>
           <div class="form-group">
@@ -319,6 +477,7 @@ input,select,textarea{font-family:var(--font)}
           </div>
           <button class="btn btn-primary" onclick="savePersona()">保存人设</button>
         </div>
+
         <div class="card">
           <h3>WeChatAgent 白名单</h3>
           <div class="hint" style="margin-bottom:8px">读取器只推送这份名单里的会话。灵枢添加聊天时会自动同步，这里是当前实际状态。</div>
@@ -326,51 +485,9 @@ input,select,textarea{font-family:var(--font)}
         </div>
       </div>
 
-      <!-- 记忆 -->
-      <div class="section" id="page-memory">
-        <h2 class="section-title">记忆</h2>
-        <div class="card-grid" style="margin-bottom:14px">
-          <div class="card"><h3>记忆总量</h3><div id="mem-stats">—</div></div>
-          <div class="card"><h3>遗忘曲线</h3><div id="mem-curve" class="hint">—</div></div>
-          <div class="card"><h3>维护</h3>
-            <div class="btn-group">
-              <button class="btn btn-sm" onclick="memForget(true)">预演遗忘</button>
-              <button class="btn btn-sm btn-primary" onclick="memForget(false)">执行遗忘</button>
-              <button class="btn btn-sm" onclick="memSweep()">全库巡检</button>
-            </div>
-            <div class="hint" id="mem-lastop" style="margin-top:8px">—</div>
-          </div>
-        </div>
-        <div class="chats-layout" style="height:calc(100vh - 300px);min-height:420px">
-          <div class="col-left">
-            <div class="col-head"><span>有记忆的会话</span><span id="mem-scope-count">0</span></div>
-            <div class="chat-list" id="mem-scope-list"></div>
-          </div>
-          <div class="col-mid">
-            <div class="col-head">
-              <span id="mem-title">未选择会话</span>
-              <span class="btn-group">
-                <button class="btn btn-sm" onclick="memCompact()">压缩记忆</button>
-                <button class="btn btn-sm" onclick="memReload()">刷新</button>
-              </span>
-            </div>
-            <div style="padding:8px 12px;border-bottom:1px solid var(--border);display:flex;gap:6px;flex-wrap:wrap" id="mem-tabs"></div>
-            <div style="padding:10px 12px;border-bottom:1px solid var(--border);display:flex;gap:6px">
-              <input id="mem-search" placeholder="在记忆里搜索…" style="flex:1;padding:7px 9px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px" onkeydown="if(event.key==='Enter')memSearch()">
-              <button class="btn btn-sm" onclick="memSearch()">搜</button>
-              <button class="btn btn-sm" onclick="memClearSearch()">清</button>
-            </div>
-            <div class="messages" id="mem-list" style="gap:8px"></div>
-          </div>
-          <div class="col-right" id="mem-side">
-            <div class="msg-center">左侧选择会话</div>
-          </div>
-        </div>
-      </div>
-
       <!-- 插件 -->
       <div class="section" id="page-plugins">
-        <h2 class="section-title">插件</h2>
+        <h2 class="section-title">插件<span class="hint">给模型装上工具</span></h2>
         <div class="btn-group" style="margin-bottom:14px">
           <button class="btn btn-primary" onclick="showScaffold()">+ 新建插件</button>
           <button class="btn" onclick="doReloadPlugins()">重载插件</button>
@@ -382,11 +499,19 @@ input,select,textarea{font-family:var(--font)}
       <!-- 日志 -->
       <div class="section" id="page-logs">
         <h2 class="section-title">系统日志</h2>
-        <div class="btn-group" style="margin-bottom:10px">
+        <div class="btn-group" style="margin-bottom:12px">
           <button class="btn btn-sm" onclick="loadLogs()">刷新</button>
           <button class="btn btn-sm" id="stream-btn" onclick="toggleStream()">▶ 实时流</button>
+          <input id="log-filter" class="ctl" style="width:auto;flex:0 0 220px;padding:5px 10px" placeholder="过滤关键字…" oninput="applyLogFilter()">
+          <select id="log-level" class="ctl" style="width:auto;flex:0 0 130px;padding:5px 10px" onchange="applyLogFilter()">
+            <option value="">全部级别</option>
+            <option value="error">仅 error</option>
+            <option value="warn">warn 以上</option>
+            <option value="info">info 以上</option>
+          </select>
+          <button class="btn btn-sm btn-ghost" onclick="clearLogs()">清屏</button>
         </div>
-        <div class="card" style="padding:10px"><div class="log-list" id="log-list"></div></div>
+        <div class="card" style="padding:12px 14px"><div class="log-list" id="log-list"></div></div>
       </div>
     </div>
   </div>
@@ -400,6 +525,8 @@ const S = {
   config: null, chats: [], providers: [], plugins: [], personas: [], health: null,
   current: null, streamOn: false, streamCtrl: null,
 };
+const LOGS = [];        // 全量日志缓冲（实时流在这里追加）
+const LOG_MAX = 500;
 
 // ── 通用 ──
 async function api(path, opts = {}) {
@@ -413,24 +540,32 @@ async function api(path, opts = {}) {
   if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
   return data;
 }
-async function apiSafe(path, opts) { try { return await api(path, opts); } catch (e) { console.warn(path, e.message); return null; } }
+async function apiSafe(path, opts) {
+  try { return await api(path, opts); }
+  catch (e) { console.warn(path, e.message); toast('请求失败：' + e.message, 'error'); return null; }
+}
 function toast(msg, type = 'info') {
   const el = document.createElement('div');
   el.className = 'toast ' + type;
   el.textContent = msg;
   document.getElementById('toasts').appendChild(el);
-  setTimeout(() => el.remove(), 3200);
+  setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity .25s'; }, 3400);
+  setTimeout(() => el.remove(), 3700);
 }
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 function closeModal() { document.getElementById('modal').style.display = 'none'; }
-function openModal(html) { document.getElementById('modal-body').innerHTML = html; document.getElementById('modal').style.display = 'flex'; }
+function openModal(html) {
+  document.getElementById('modal-body').innerHTML = html;
+  document.getElementById('modal').style.display = 'flex';
+}
 function fmtTime(ts) {
   if (!ts) return '';
   const d = new Date(Number(ts) < 1e12 ? Number(ts) * 1000 : Number(ts));
   return d.toLocaleString('zh-CN', { hour12: false });
 }
+function num(n) { return Number(n || 0).toLocaleString(); }
 
 // ── 导航 ──
 function activatePage(page) {
@@ -453,56 +588,7 @@ async function refreshAll() {
   await Promise.allSettled([loadHealth(), loadPlugins(), loadProviders(), loadPersonas()]);
   await Promise.allSettled([loadConfig(), loadChats()]);
   renderDashboard();
-}
-
-// ── 预设人格 ──
-async function loadPersonas() {
-  const d = await apiSafe('/personas');
-  if (!d) return;
-  S.personas = d.personas || [];
-  const sel = document.getElementById('persona-preset');
-  if (sel) {
-    sel.innerHTML = S.personas.map(p =>
-      `<option value="${esc(p.id)}">${esc(p.emoji)} ${esc(p.name)} — ${esc((p.tags || []).join(' / '))}</option>`
-    ).join('');
-    previewPersona();
-  }
-}
-
-function previewPersona() {
-  const id = document.getElementById('persona-preset')?.value;
-  const p = (S.personas || []).find(x => x.id === id);
-  const el = document.getElementById('persona-desc');
-  if (!el) return;
-  el.innerHTML = p
-    ? `<b>${esc(p.name)}</b>：${esc(p.summary)}${p.greeting ? `<br>开场白：「${esc(p.greeting)}」` : ''}`
-    : '—';
-}
-
-async function applyPersonaGlobal() {
-  const id = document.getElementById('persona-preset').value;
-  if (!id) return;
-  if (!confirm('会覆盖当前的全局人设，继续？')) return;
-  try {
-    await api('/personas/apply', { method: 'POST', body: JSON.stringify({ id }) });
-    toast('已套用到全局', 'success');
-    await loadConfig();
-  } catch (e) { toast('失败: ' + e.message, 'error'); }
-}
-
-async function applyPersonaToChat(talker) {
-  const id = document.getElementById('cs-persona-preset').value;
-  if (!id) return;
-  try {
-    await api('/personas/apply', { method: 'POST', body: JSON.stringify({ id, talker }) });
-    toast('已套用到这个聊天', 'success');
-    await loadChats();
-    await renderSettings(talker);
-  } catch (e) { toast('失败: ' + e.message, 'error'); }
-}
-async function refreshLight() {
-  await loadHealth();
-  renderDashboard();
+  if (document.getElementById('page-memory')?.classList.contains('active')) loadMemory();
 }
 
 // ── 健康 ──
@@ -511,36 +597,51 @@ async function loadHealth() {
   if (!h) return;
   S.health = h;
   const st = h.state || {};
-  setDot('dotWx', 'txtWx', st.connected, '微信');
-  setDot('dotSse', 'txtSse', st.sseConnected, '推送');
-  setDot('dotHook', 'txtHook', st.hookConnected, '发送');
-  document.getElementById('statTag').textContent = `收 ${st.received || 0} / 发 ${st.sent || 0} / 跳过 ${st.skipped || 0}`;
-  if (h.logs) renderLogs(h.logs, ['dash-logs']);
+  setPill('pillWx', 'txtWx', st.connected, '微信');
+  setPill('pillSse', 'txtSse', st.sseConnected, '推送');
+  setPill('pillHook', 'txtHook', st.hookConnected, '发送');
+  document.getElementById('statTag').textContent =
+    `收 ${st.received || 0} / 发 ${st.sent || 0} / 跳过 ${st.skipped || 0}`;
+  if (h.logs?.length) {
+    mergeLogs(h.logs);
+    renderDashLogs();
+  }
 }
-function setDot(dot, txt, ok, label) {
-  document.getElementById(dot).className = 'dot ' + (ok ? 'green' : 'red');
+function setPill(pill, txt, ok, label) {
+  document.getElementById(pill).className = 'pill ' + (ok ? 'ok' : 'bad');
   document.getElementById(txt).textContent = label + (ok ? ' 正常' : ' 断开');
 }
 function renderDashboard() {
   const h = S.health || {};
   const st = h.state || {};
   const r = h.reader || {};
+  document.getElementById('st-recv').textContent = st.received || 0;
+  document.getElementById('st-sent').textContent = st.sent || 0;
+  document.getElementById('st-skip').textContent = st.skipped || 0;
+  document.getElementById('st-skip-reason').textContent =
+    st.lastSkipReason ? `最近一次：${st.lastSkipReason}` : '未触发 / 自己发的 / 限流';
+  document.getElementById('st-chats').textContent = S.chats.length;
+  document.getElementById('nav-chats').textContent = S.chats.length;
+  const groups = S.chats.filter(c => c.kind === 'group').length;
+  document.getElementById('st-chats-sub').textContent = `${groups} 个群 · ${S.chats.length - groups} 个私聊`;
+  document.getElementById('dash-updated').textContent = '更新于 ' + new Date().toLocaleTimeString('zh-CN', { hour12: false });
+
   document.getElementById('dash-conn').innerHTML = `
-    <div>微信读取：<b class="${st.connected ? 'lvl-info' : 'lvl-error'}">${st.connected ? '已连接' : '未连接'}</b></div>
-    <div>消息推送：<b class="${st.sseConnected ? 'lvl-info' : 'lvl-error'}">${st.sseConnected ? '已订阅' : '未订阅'}</b>，重连 ${st.sseReconnects || 0} 次，事件 ${st.sseEvents || 0}</div>
-    <div>发送通道：<b class="${st.hookConnected ? 'lvl-info' : 'lvl-error'}">${st.hookConnected ? '可用' : '不可用'}</b></div>
-    <div class="hint">Reader 订阅者 ${r.subscribers ?? '—'}，累计推送 ${r.pushed ?? '—'}，轮询错误 ${r.lastError || '无'}</div>`;
-  document.getElementById('dash-stats').innerHTML = `
-    <div>收到：<b>${st.received || 0}</b> 条</div>
-    <div>发出：<b>${st.sent || 0}</b> 条</div>
-    <div>跳过：<b>${st.skipped || 0}</b> 条 <span class="hint">(${esc(st.lastSkipReason || '—')})</span></div>`;
-  const enabled = S.plugins.filter(p => p.enabled).length;
-  document.getElementById('dash-plugins').innerHTML = `<span class="tag tag-green">${enabled} 启用</span> / ${S.plugins.length} 个插件`;
-  document.getElementById('dash-chats').innerHTML = `<span class="tag tag-blue">${S.chats.length} 个</span> 聊天已接入`;
-  // 自检下拉
+    <div class="kv"><span>微信读取器</span><b class="${st.connected ? 'lvl-info' : 'lvl-error'}">${st.connected ? '已连接' : '未连接'}</b></div>
+    <div class="kv"><span>消息推送（SSE）</span><b class="${st.sseConnected ? 'lvl-info' : 'lvl-error'}">${st.sseConnected ? '已订阅' : '未订阅'}</b></div>
+    <div class="kv"><span>发送通道（Hook）</span><b class="${st.hookConnected ? 'lvl-info' : 'lvl-error'}">${st.hookConnected ? '可用' : '不可用'}</b></div>
+    <div class="divider"></div>
+    <div class="kv"><span>累计事件 / 重连</span><span>${st.sseEvents || 0} / ${st.sseReconnects || 0}</span></div>
+    <div class="kv"><span>Reader 订阅者 · 累计推送</span><span>${r.subscribers ?? '—'} · ${r.pushed ?? '—'}</span></div>
+    <div class="kv"><span>轮询异常</span><span class="${r.lastError ? 'lvl-warn' : 'hint dim'}">${esc(r.lastError || '无')}</span></div>
+    <div class="kv"><span>正在处理</span><span>${st.processing || 0} 个会话</span></div>`;
+
+  // 自检下拉：保留已选值
   const sel = document.getElementById('debug-talker');
   const prev = sel.value;
-  sel.innerHTML = S.chats.map(c => `<option value="${esc(c.talker)}">${esc(c.name || c.talker)}（${c.kind === 'group' ? '群' : '私'}）</option>`).join('');
+  sel.innerHTML = S.chats.length
+    ? S.chats.map(c => `<option value="${esc(c.talker)}">${esc(c.name || c.talker)}（${c.kind === 'group' ? '群' : '私'}）</option>`).join('')
+    : '<option value="">（还没有接入聊天）</option>';
   if (prev && S.chats.some(c => c.talker === prev)) sel.value = prev;
 }
 
@@ -556,16 +657,16 @@ async function loadConfig() {
   document.getElementById('wc-trigger-mode').value = w.triggerMode || 'smart';
   document.getElementById('wc-wake-words').value = (w.wakeWords || []).join(', ');
   document.getElementById('wc-bot-names').value = (w.botNames || []).join(', ');
-  document.getElementById('wc-max-chars').value = w.reply?.maxCharsPerMessage || 500;
-  document.getElementById('wc-max-msgs').value = w.reply?.maxMessagesPerTurn || 3;
-  document.getElementById('wc-interval').value = w.reply?.minIntervalMs || 1200;
+  document.getElementById('wc-max-chars').value = w.reply?.maxCharsPerMessage ?? 500;
+  document.getElementById('wc-max-msgs').value = w.reply?.maxMessagesPerTurn ?? 3;
+  document.getElementById('wc-interval').value = w.reply?.minIntervalMs ?? 1200;
   document.getElementById('wc-auto-view').checked = w.media?.autoViewImages !== false;
   document.getElementById('wc-auto-send').checked = w.media?.autoSendImages !== false;
   document.getElementById('wc-persona').value = cfg.persona?.default || '';
-  // 默认模型
   const psel = document.getElementById('ai-default-provider');
+  const prev = psel.value;
   psel.innerHTML = S.providers.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
-  psel.value = cfg.ai?.defaultProvider || '';
+  psel.value = S.providers.some(p => p.id === (cfg.ai?.defaultProvider || '')) ? cfg.ai.defaultProvider : (prev || '');
   fillModelSelect();
 }
 function fillModelSelect() {
@@ -573,24 +674,33 @@ function fillModelSelect() {
   const prov = S.providers.find(p => p.id === pid);
   const sel = document.getElementById('ai-default-model');
   const cur = S.config?.ai?.defaultModel || '';
-  sel.innerHTML = (prov?.models || []).map(m =>
+  const opts = (prov?.models || []).map(m =>
     `<option value="${esc(m.id)}" ${m.id === cur ? 'selected' : ''}>${esc(m.id)}${m.multimodal ? ' 🖼' : ''}${m.imageGen ? ' 🎨' : ''}</option>`
-  ).join('');
+  );
+  // 配置里的模型不在列表里时也保留，避免保存时被清空
+  if (cur && !(prov?.models || []).some(m => m.id === cur)) {
+    opts.unshift(`<option value="${esc(cur)}" selected>${esc(cur)}（未在模型列表中）</option>`);
+  }
+  sel.innerHTML = opts.join('') || '<option value="">（该提供商还没拉到模型）</option>';
   fillVisionSelect();
 }
-
 function fillVisionSelect() {
   const sel = document.getElementById('ai-vision-model');
   if (!sel) return;
   const v = S.config?.ai?.vision || {};
-  const cur = v.providerId ? `${v.providerId}|${v.modelId}` : '';
+  const cur = v.providerId && v.modelId ? `${v.providerId}|${v.modelId}` : '';
   const opts = ['<option value="">跟随对话模型</option>'];
+  let has = false;
   for (const p of S.providers) {
     for (const m of (p.models || [])) {
       if (!m.multimodal) continue;
       const val = `${p.id}|${m.id}`;
+      if (val === cur) has = true;
       opts.push(`<option value="${esc(val)}" ${cur === val ? 'selected' : ''}>${esc(p.name)} · ${esc(m.id)}</option>`);
     }
+  }
+  if (cur && !has) {
+    opts.push(`<option value="${esc(cur)}" selected>${esc(v.providerId)} · ${esc(v.modelId)}（已配置）</option>`);
   }
   sel.innerHTML = opts.join('');
 }
@@ -628,7 +738,7 @@ async function testAIDefault() {
   toast('测试中…', 'info');
   try {
     const r = await api('/ai/test', { method: 'POST', body: JSON.stringify({ prompt: '只回答两个字：正常' }) });
-    toast('模型回复：' + (r.content || '').trim().slice(0, 40), 'success');
+    toast('模型回复：' + (r.content || '').trim().slice(0, 40) || '（空）', 'success');
   } catch (e) { toast('测试失败: ' + e.message, 'error'); }
 }
 async function saveWechatBasic() {
@@ -639,6 +749,7 @@ async function saveWechatBasic() {
       account: document.getElementById('wc-account').value.trim(),
     } }) });
     toast('已保存，建议点「重新连接」生效', 'success');
+    await loadConfig();
   } catch (e) { toast('保存失败: ' + e.message, 'error'); }
 }
 async function saveWechatTriggers() {
@@ -676,6 +787,49 @@ async function reconnectWechat() {
   } catch (e) { toast('重连失败: ' + e.message, 'error'); }
 }
 
+// ── 预设人格 ──
+async function loadPersonas() {
+  const d = await apiSafe('/personas');
+  if (!d) return;
+  S.personas = d.personas || [];
+  const sel = document.getElementById('persona-preset');
+  if (sel) {
+    sel.innerHTML = S.personas.map(p =>
+      `<option value="${esc(p.id)}">${esc(p.emoji || '')} ${esc(p.name)}${p.tags?.length ? ' — ' + esc(p.tags.join(' / ')) : ''}</option>`
+    ).join('');
+    previewPersona();
+  }
+}
+function previewPersona() {
+  const id = document.getElementById('persona-preset')?.value;
+  const p = (S.personas || []).find(x => x.id === id);
+  const el = document.getElementById('persona-desc');
+  if (!el) return;
+  el.innerHTML = p
+    ? `<b>${esc(p.name)}</b>：${esc(p.summary || '')}${p.greeting ? `<br>开场白：「${esc(p.greeting)}」` : ''}`
+    : '—';
+}
+async function applyPersonaGlobal() {
+  const id = document.getElementById('persona-preset').value;
+  if (!id) return;
+  if (!confirm('会覆盖当前的全局人设，继续？')) return;
+  try {
+    await api('/personas/apply', { method: 'POST', body: JSON.stringify({ id }) });
+    toast('已套用到全局', 'success');
+    await loadConfig();
+  } catch (e) { toast('失败: ' + e.message, 'error'); }
+}
+async function applyPersonaToChat(talker) {
+  const id = document.getElementById('cs-persona-preset').value;
+  if (!id) return;
+  try {
+    await api('/personas/apply', { method: 'POST', body: JSON.stringify({ id, talker }) });
+    toast('已套用到这个聊天', 'success');
+    await loadChats();
+    await renderSettings(talker);
+  } catch (e) { toast('失败: ' + e.message, 'error'); }
+}
+
 // ── AI 提供商 ──
 async function loadProviders() {
   const d = await apiSafe('/ai/providers');
@@ -685,7 +839,10 @@ async function loadProviders() {
   box.innerHTML = S.providers.map(p => `
     <div class="provider-card">
       <div class="provider-header">
-        <h4>${esc(p.name)} ${p.isDefault ? '<span class="tag tag-green">默认</span>' : ''}</h4>
+        <h4>${esc(p.name)}
+          ${p.isDefault ? '<span class="tag tag-green">默认</span>' : ''}
+          ${p.isFallback ? '<span class="tag tag-cyan">降级</span>' : ''}
+        </h4>
         <span class="btn-group">
           <span class="tag ${p.hasKey ? 'tag-green' : 'tag-red'}">${p.hasKey ? 'Key 已配置' : '缺少 Key'}</span>
           <button class="btn btn-sm" onclick="refreshModels('${esc(p.id)}')">刷新模型</button>
@@ -697,21 +854,21 @@ async function loadProviders() {
         <div class="form-group"><label>Base URL</label><input id="pv-url-${esc(p.id)}" value="${esc(p.baseUrl || '')}"></div>
         <div class="form-group"><label>API Key</label><input id="pv-key-${esc(p.id)}" type="password" placeholder="${p.hasKey ? '已配置，留空不修改' : '填写 API Key'}"></div>
       </div>
-      <div class="model-chips">
-        ${(p.models || []).map(m => `<span class="tag ${m.imageGen ? 'tag-purple' : m.multimodal ? 'tag-blue' : ''}">${esc(m.id)}</span>`).join('') || '<span class="hint">暂无模型，点「刷新模型」拉取</span>'}
+      <div class="chips">
+        ${(p.models || []).map(m => `<span class="tag ${m.imageGen ? 'tag-purple' : m.multimodal ? 'tag-blue' : ''}">${esc(m.id)}${m.multimodal ? ' 🖼' : ''}${m.imageGen ? ' 🎨' : ''}</span>`).join('') || '<span class="hint dim">暂无模型，点「刷新模型」拉取</span>'}
       </div>
       <button class="btn btn-sm" onclick="saveProvider('${esc(p.id)}')">保存此提供商</button>
-    </div>`).join('');
+    </div>`).join('') || '<div class="empty"><span class="big">🤖</span>还没有提供商，先一键接入 DeepSeek 或手动添加</div>';
 }
 async function saveProvider(id) {
   const baseUrl = document.getElementById('pv-url-' + id).value.trim();
   const key = document.getElementById('pv-key-' + id).value.trim();
-  const cfg = S.config || await api('/config');
-  const providers = JSON.parse(JSON.stringify(cfg.ai.providers || {}));
-  providers[id] = providers[id] || { name: id, models: [] };
-  providers[id].baseUrl = baseUrl;
-  if (key) providers[id].apiKey = key;
   try {
+    const cfg = S.config || await api('/config');
+    const providers = JSON.parse(JSON.stringify(cfg.ai.providers || {}));
+    providers[id] = providers[id] || { name: id, models: [] };
+    providers[id].baseUrl = baseUrl;
+    if (key) providers[id].apiKey = key;
     await api('/config', { method: 'POST', body: JSON.stringify({ ai: { providers } }) });
     toast('已保存', 'success');
     await Promise.allSettled([loadConfig(), loadProviders()]);
@@ -729,7 +886,7 @@ async function testProvider(id) {
   toast('测试中…', 'info');
   try {
     const r = await api('/ai/test', { method: 'POST', body: JSON.stringify({ providerId: id, prompt: '只回答两个字：正常' }) });
-    toast(`${r.model} → ${(r.content || '').trim().slice(0, 30)}`, 'success');
+    toast(`${r.model || id} → ${(r.content || '').trim().slice(0, 30) || '（空）'}`, 'success');
   } catch (e) { toast('失败: ' + e.message, 'error'); }
 }
 async function deleteProvider(id) {
@@ -742,11 +899,11 @@ async function deleteProvider(id) {
 }
 function showAddProvider() {
   openModal(`<h3>添加 AI 提供商</h3>
-    <div class="form-group"><label>ID（英文，如 my-gpt）</label><input id="np-id"></div>
-    <div class="form-group"><label>显示名称</label><input id="np-name"></div>
+    <div class="form-group"><label>ID（英文，如 my-gpt）</label><input id="np-id" placeholder="my-gpt"></div>
+    <div class="form-group"><label>显示名称</label><input id="np-name" placeholder="我的模型"></div>
     <div class="form-group"><label>Base URL（OpenAI 兼容，可带 /v1）</label><input id="np-url" placeholder="https://api.example.com/v1"></div>
     <div class="form-group"><label>API Key</label><input id="np-key" type="password"></div>
-    <div class="hint">添加后点「刷新模型」自动拉取该提供商的模型列表。</div>
+    <div class="hint">添加后会自动拉取该提供商的模型列表。</div>
     <div class="modal-actions"><button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="addProvider()">添加</button></div>`);
 }
 async function addProvider() {
@@ -756,10 +913,10 @@ async function addProvider() {
   const apiKey = document.getElementById('np-key').value.trim();
   if (!/^[a-z0-9][a-z0-9-]*$/i.test(id)) { toast('ID 只能用字母数字和连字符', 'error'); return; }
   if (!baseUrl) { toast('请填写 Base URL', 'error'); return; }
-  const cfg = S.config || await api('/config');
-  const providers = JSON.parse(JSON.stringify(cfg.ai.providers || {}));
-  providers[id] = { name, baseUrl, apiKey, models: [] };
   try {
+    const cfg = S.config || await api('/config');
+    const providers = JSON.parse(JSON.stringify(cfg.ai.providers || {}));
+    providers[id] = { name, baseUrl, apiKey, models: [] };
     await api('/config', { method: 'POST', body: JSON.stringify({ ai: { providers } }) });
     closeModal();
     toast('已添加，正在拉取模型…', 'success');
@@ -775,32 +932,38 @@ async function loadChats() {
   renderChatList();
   renderAgentWhitelist(d.agentWhitelist);
   document.getElementById('chat-count').textContent = S.chats.length;
-  if (S.current && !S.chats.some(c => c.talker === S.current)) S.current = null;
+  document.getElementById('nav-chats').textContent = S.chats.length;
+  if (S.current && !S.chats.some(c => c.talker === S.current)) {
+    S.current = null;
+    document.getElementById('messages').innerHTML = '<div class="empty"><span class="big">💬</span>左侧选择或搜索添加一个聊天</div>';
+    document.getElementById('chat-settings').innerHTML = '<div class="empty"><span class="big">⚙️</span>选择聊天后在这里配置</div>';
+    document.getElementById('chat-title').textContent = '未选择聊天';
+  }
   renderDashboard();
 }
 function renderAgentWhitelist(w) {
   const el = document.getElementById('agent-whitelist');
   if (!el || !w) return;
   el.innerHTML = `
-    <div>群聊：${(w.groups || []).map(g => `<span class="tag">${esc(g)}</span>`).join(' ') || '<span class="hint">空</span>'}</div>
-    <div style="margin-top:6px">私聊：${(w.private || []).map(g => `<span class="tag">${esc(g)}</span>`).join(' ') || '<span class="hint">空</span>'}</div>
-    <div class="hint" style="margin-top:6px">账号昵称：${(w.nicknames || []).join(', ') || '未配置'}</div>`;
+    <div style="margin-bottom:6px">群聊：${(w.groups || []).map(g => `<span class="tag">${esc(g)}</span>`).join(' ') || '<span class="hint dim">空</span>'}</div>
+    <div style="margin-bottom:6px">私聊：${(w.private || []).map(g => `<span class="tag">${esc(g)}</span>`).join(' ') || '<span class="hint dim">空</span>'}</div>
+    <div class="hint dim">账号昵称：${esc((w.nicknames || []).join(', ') || '未配置')}</div>`;
 }
 function renderChatList() {
   const el = document.getElementById('chat-list');
   if (!S.chats.length) {
-    el.innerHTML = '<div class="msg-center">还没有接入聊天<br><span class="hint">用上面的搜索框添加</span></div>';
+    el.innerHTML = '<div class="empty"><span class="big">🔍</span>还没有接入聊天<br>用上面的搜索框查找并添加</div>';
     return;
   }
   el.innerHTML = S.chats.map(c => `
     <div class="chat-item ${S.current === c.talker ? 'active' : ''}" onclick="selectChat('${esc(c.talker)}')">
       <div style="min-width:0">
         <div class="name">${esc(c.name || c.talker)}</div>
-        <div class="sub">${c.kind === 'group' ? '👥 群聊' : '👤 私聊'} · ${esc(c.conversationId || '—')}</div>
+        <div class="sub">${c.kind === 'group' ? '👥 群聊' : '👤 私聊'} · ${esc(c.conversationId || '—')} · 上下文 ${c.context?.count || 0} 条</div>
       </div>
       <div class="right">
         <span class="tag ${c.enabled === false ? 'tag-red' : 'tag-green'}">${c.enabled === false ? '停用' : '启用'}</span>
-        <span class="hint">${c.context?.count || 0} 条</span>
+        ${c.personaId ? `<span class="tag tag-purple">${esc(c.personaId)}</span>` : ''}
       </div>
     </div>`).join('');
 }
@@ -815,11 +978,10 @@ async function selectChat(talker) {
 async function reloadHistory() {
   if (!S.current) return;
   const box = document.getElementById('messages');
-  const c = S.chats.find(x => x.talker === S.current);
   try {
     const d = await api(`/chat/history?talker=${encodeURIComponent(S.current)}&limit=60`);
     const msgs = d.messages || [];
-    if (!msgs.length) { box.innerHTML = '<div class="msg-center">暂无历史消息</div>'; return; }
+    if (!msgs.length) { box.innerHTML = '<div class="empty"><span class="big">📭</span>暂无历史消息</div>'; return; }
     box.innerHTML = msgs.map(m => {
       const out = !!m.isSend;
       const text = m.content || m.parsedContent || (m.localType === 3 ? '[图片]' : '[非文本]');
@@ -827,13 +989,13 @@ async function reloadHistory() {
     }).join('');
     box.scrollTop = box.scrollHeight;
   } catch (e) {
-    box.innerHTML = `<div class="msg-center">读取失败：${esc(e.message)}<br><span class="hint">该聊天可能还没进入 WeChatAgent 白名单</span></div>`;
+    box.innerHTML = `<div class="empty"><span class="big">⚠️</span>读取失败：${esc(e.message)}<br><span class="hint dim">该聊天可能还没进入 WeChatAgent 白名单</span></div>`;
   }
 }
 async function sendManual() {
   const input = document.getElementById('manual-input');
   const text = input.value.trim();
-  if (!text || !S.current) return;
+  if (!text || !S.current) { toast('先选一个聊天', 'error'); return; }
   try {
     await api('/send/text', { method: 'POST', body: JSON.stringify({ talker: S.current, text }) });
     input.value = '';
@@ -844,25 +1006,24 @@ async function sendManual() {
 async function doSearch() {
   const q = document.getElementById('chat-search').value.trim();
   const box = document.getElementById('search-results');
-  box.innerHTML = '<div class="msg-center">搜索中…</div>';
-  try {
-    const d = await api('/chats/search', { method: 'POST', body: JSON.stringify({ query: q }) });
-    const list = (d.results || []).slice(0, 30);
-    if (!list.length) { box.innerHTML = '<div class="msg-center">没找到匹配的聊天</div>'; return; }
-    box.innerHTML = `<div class="col-head"><span>搜索结果</span><span>${list.length}</span></div>` +
-      list.map(r => `
-        <div class="chat-item">
-          <div style="min-width:0">
-            <div class="name">${esc(r.displayName)}</div>
-            <div class="sub">${r.kind === 'group' ? '👥' : '👤'} ${esc(r.conversationId || r.talker)}</div>
-          </div>
-          <div class="right">
-            ${r.added
-              ? '<span class="tag tag-green">已添加</span>'
-              : `<button class="btn btn-sm btn-primary" onclick="addChat('${esc(r.talker)}','${esc(r.kind)}','${esc(r.conversationId)}','${esc(r.displayName)}')">添加</button>`}
-          </div>
-        </div>`).join('');
-  } catch (e) { box.innerHTML = `<div class="msg-center">搜索失败：${esc(e.message)}</div>`; }
+  box.innerHTML = '<div class="empty">搜索中…</div>';
+  const d = await apiSafe('/chats/search', { method: 'POST', body: JSON.stringify({ query: q }) });
+  if (!d) { box.innerHTML = ''; return; }
+  const list = (d.results || []).slice(0, 30);
+  if (!list.length) { box.innerHTML = '<div class="empty"><span class="big">🔎</span>没找到匹配的聊天</div>'; return; }
+  box.innerHTML = `<div class="col-head"><span class="t">搜索结果</span><span class="tag">${list.length}</span></div>` +
+    list.map(r => `
+      <div class="chat-item noclick">
+        <div style="min-width:0">
+          <div class="name">${esc(r.displayName)}</div>
+          <div class="sub">${r.kind === 'group' ? '👥 群' : '👤 私'} · ${esc(r.conversationId || r.talker)}</div>
+        </div>
+        <div class="right">
+          ${r.added
+            ? '<span class="tag tag-green">已添加</span>'
+            : `<button class="btn btn-sm btn-primary" onclick="addChat('${esc(r.talker)}','${esc(r.kind)}','${esc(r.conversationId)}','${esc(r.displayName)}')">添加</button>`}
+        </div>
+      </div>`).join('');
 }
 async function addChat(talker, kind, conversationId, name) {
   toast('正在添加…', 'info');
@@ -873,57 +1034,58 @@ async function addChat(talker, kind, conversationId, name) {
     await selectChat(talker);
   } catch (e) { toast('添加失败: ' + e.message, 'error'); }
 }
+
 async function renderSettings(talker) {
   const box = document.getElementById('chat-settings');
   const c = S.chats.find(x => x.talker === talker);
-  if (!c) { box.innerHTML = '<div class="msg-center">选择聊天后在这里配置</div>'; return; }
-  const providers = S.providers;
+  if (!c) { box.innerHTML = '<div class="empty"><span class="big">⚙️</span>选择聊天后在这里配置</div>'; return; }
+  // 用「生效值」而不是原始覆盖值，避免未设置的项显示成 0/关闭
+  const eff = c.settings?.context || {};
   const curPid = c.model?.providerId || '';
-  const provModels = providers.find(p => p.id === curPid)?.models || [];
-  const allPlugins = S.plugins;
+  const provModels = S.providers.find(p => p.id === curPid)?.models || [];
+  const compressOn = (eff.compressAtTokens ?? 0) !== 0;
 
   box.innerHTML = `
-    <h3 style="font-size:14px;color:var(--accent);margin-bottom:12px">聊天设置</h3>
-    <div class="form-group">
-      <label><input type="checkbox" id="cs-enabled" ${c.enabled !== false ? 'checked' : ''}> 启用自动回复</label>
-    </div>
+    <div class="col-head" style="border-radius:0"><span class="t">聊天设置</span><span class="tag ${c.enabled === false ? 'tag-red' : 'tag-green'}">${c.enabled === false ? '停用' : '启用'}</span></div>
+    <div style="padding:14px">
+    <div class="form-group"><label class="checkline"><input type="checkbox" id="cs-enabled" ${c.enabled !== false ? 'checked' : ''}> 启用自动回复</label></div>
     <div class="form-group">
       <label>触发方式</label>
       <select id="cs-trigger">
         <option value="">跟随全局</option>
-        <option value="smart" ${c.triggerMode === 'smart' ? 'selected' : ''}>智能</option>
-        <option value="mention" ${c.triggerMode === 'mention' ? 'selected' : ''}>仅 @ / 唤醒词</option>
-        <option value="prefix" ${c.triggerMode === 'prefix' ? 'selected' : ''}>仅前缀</option>
-        <option value="all" ${c.triggerMode === 'all' ? 'selected' : ''}>全部消息</option>
-        <option value="off" ${c.triggerMode === 'off' ? 'selected' : ''}>关闭</option>
+        ${['smart|智能', 'mention|仅 @ / 唤醒词', 'prefix|仅前缀', 'all|全部消息', 'off|关闭'].map(o => {
+          const [v, t] = o.split('|');
+          return `<option value="${v}" ${c.triggerMode === v ? 'selected' : ''}>${t}</option>`;
+        }).join('')}
       </select>
     </div>
     <div class="form-group">
       <label>该聊天使用的提供商</label>
       <select id="cs-provider" onchange="onChatProviderChange('${esc(talker)}')">
         <option value="">跟随全局</option>
-        ${providers.map(p => `<option value="${esc(p.id)}" ${curPid === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+        ${S.providers.map(p => `<option value="${esc(p.id)}" ${curPid === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
       </select>
     </div>
     <div class="form-group">
       <label>该聊天使用的模型</label>
       <select id="cs-model">
         <option value="">跟随全局</option>
-        ${provModels.map(m => `<option value="${esc(m.id)}" ${c.model?.modelId === m.id ? 'selected' : ''}>${esc(m.id)}</option>`).join('')}
+        ${provModels.map(m => `<option value="${esc(m.id)}" ${c.model?.modelId === m.id ? 'selected' : ''}>${esc(m.id)}${m.multimodal ? ' 🖼' : ''}</option>`).join('')}
+        ${c.model?.modelId && !provModels.some(m => m.id === c.model.modelId) ? `<option value="${esc(c.model.modelId)}" selected>${esc(c.model.modelId)}（已配置）</option>` : ''}
       </select>
     </div>
     <div class="form-group">
       <label>该聊天启用的插件</label>
       <div id="cs-plugins" style="display:flex;flex-direction:column;gap:6px">
-        ${allPlugins.map(p => `<label style="font-size:12px;color:var(--text)"><input type="checkbox" value="${esc(p.id)}" ${(c.plugins ? c.plugins.includes(p.id) : p.enabled) ? 'checked' : ''}> ${esc(p.name || p.id)}</label>`).join('') || '<span class="hint">暂无插件</span>'}
+        ${S.plugins.map(p => `<label class="checkline"><input type="checkbox" value="${esc(p.id)}" ${(Array.isArray(c.plugins) ? c.plugins.includes(p.id) : p.enabled) ? 'checked' : ''}> ${esc(p.name || p.id)}</label>`).join('') || '<span class="hint dim">暂无插件</span>'}
       </div>
-      <div class="hint">勾选后仅这些插件的工具对该聊天可用；全勾＝跟随全局，全不勾＝该聊天禁用所有插件</div>
+      <div class="hint dim">全勾＝跟随全局；全不勾＝该聊天禁用所有插件</div>
     </div>
     <div class="form-group">
       <label>套用预设人格（会覆盖下面对话人设）</label>
       <div style="display:flex;gap:6px">
-        <select id="cs-persona-preset" style="flex:1">
-          ${(S.personas || []).map(p => `<option value="${esc(p.id)}">${esc(p.emoji)} ${esc(p.name)}</option>`).join('')}
+        <select id="cs-persona-preset" class="ctl" style="flex:1">
+          ${(S.personas || []).map(p => `<option value="${esc(p.id)}">${esc(p.emoji || '')} ${esc(p.name)}</option>`).join('') || '<option value="">（无）</option>'}
         </select>
         <button class="btn btn-sm" onclick="applyPersonaToChat('${esc(talker)}')">套用</button>
       </div>
@@ -937,21 +1099,23 @@ async function renderSettings(talker) {
       <textarea id="cs-style" rows="2" placeholder="例如：回复不超过 50 字，不用敬语。">${esc(c.style || '')}</textarea>
     </div>
     <div class="form-group">
-      <label><input type="checkbox" id="cs-memory" ${c.memory?.enabled !== false ? 'checked' : ''}> 为该聊天启用记忆</label>
-      <div class="hint">开启后会从对话里自动提取事实、打标签、按遗忘曲线管理</div>
+      <label class="checkline"><input type="checkbox" id="cs-memory" ${c.memory?.enabled !== false ? 'checked' : ''}> 为该聊天启用记忆</label>
+      <div class="hint dim">开启后会从对话里自动提取事实、打标签、按遗忘曲线管理</div>
     </div>
     <div class="form-group">
-      <label><input type="checkbox" id="cs-auto-compress" ${(c.context?.compressAtTokens ?? 0) !== 0 ? 'checked' : ''}> 自动压缩上下文</label>
+      <label class="checkline"><input type="checkbox" id="cs-auto-compress" ${compressOn ? 'checked' : ''}> 自动压缩上下文</label>
       <div class="form-row" style="margin-top:6px">
-        <div class="form-group"><label>压缩阈值(tokens)</label><input id="cs-compress-at" type="number" value="${c.context?.compressAtTokens ?? 48000}"></div>
-        <div class="form-group"><label>保留原文条数</label><input id="cs-keep" type="number" value="${c.context?.keepRecentMessages ?? 14}"></div>
+        <div class="form-group"><label>压缩阈值(tokens)</label><input id="cs-compress-at" type="number" value="${eff.compressAtTokens ?? 48000}"></div>
+        <div class="form-group"><label>保留原文条数</label><input id="cs-keep" type="number" value="${eff.keepRecentMessages ?? 14}"></div>
       </div>
+      <div class="hint dim">上下文 ${c.context?.count || 0} 条 / ${num(c.context?.tokens || 0)} tokens</div>
     </div>
     <div class="btn-group">
       <button class="btn btn-primary btn-sm" onclick="saveChatSettings('${esc(talker)}')">保存设置</button>
-      <button class="btn btn-sm" onclick="compressCtx('${esc(talker)}')">立刻压缩上下文</button>
+      <button class="btn btn-sm" onclick="compressCtx('${esc(talker)}')">立刻压缩</button>
       <button class="btn btn-sm" onclick="clearContext('${esc(talker)}')">清空上下文</button>
       <button class="btn btn-sm btn-danger" onclick="removeChat('${esc(talker)}')">移除</button>
+    </div>
     </div>`;
 }
 function onChatProviderChange(talker) {
@@ -959,8 +1123,9 @@ function onChatProviderChange(talker) {
   const pid = document.getElementById('cs-provider').value;
   const prov = S.providers.find(p => p.id === pid);
   const sel = document.getElementById('cs-model');
+  const keep = c?.model?.providerId === pid ? c.model.modelId : '';
   sel.innerHTML = '<option value="">跟随全局</option>' +
-    (prov?.models || []).map(m => `<option value="${esc(m.id)}">${esc(m.id)}</option>`).join('');
+    (prov?.models || []).map(m => `<option value="${esc(m.id)}" ${m.id === keep ? 'selected' : ''}>${esc(m.id)}${m.multimodal ? ' 🖼' : ''}</option>`).join('');
 }
 async function saveChatSettings(talker) {
   const pluginBoxes = [...document.querySelectorAll('#cs-plugins input[type=checkbox]')];
@@ -989,28 +1154,29 @@ async function saveChatSettings(talker) {
     await renderSettings(talker);
   } catch (e) { toast('保存失败: ' + e.message, 'error'); }
 }
-
 async function compressCtx(talker) {
   toast('压缩中…', 'info');
   const r = await apiSafe('/context/compress', { method: 'POST', body: JSON.stringify({ talker, force: true }) });
   if (!r) return;
   if (r.summary) toast(`已压缩 ${r.compressed} 条 → 摘要（${r.beforeTokens}→${r.afterTokens} tokens）`, 'success');
-  else toast('未压缩：' + (r.skipped || '消息太少'), 'info');
+  else toast('未压缩：' + (r.error || r.skipped || '消息太少'), 'info');
 }
 async function clearContext(talker) {
-  if (!confirm('清空该聊天的对话上下文？')) return;
-  await api('/context/clear', { method: 'POST', body: JSON.stringify({ talker }) });
-  toast('上下文已清空', 'success');
-  loadChats();
+  if (!confirm('清空该聊天的对话上下文？（记忆不受影响）')) return;
+  try {
+    await api('/context/clear', { method: 'POST', body: JSON.stringify({ talker }) });
+    toast('上下文已清空', 'success');
+    await loadChats();
+  } catch (e) { toast('清空失败: ' + e.message, 'error'); }
 }
 async function removeChat(talker) {
   if (!confirm('从灵枢中移除该聊天？（不会退出微信群）')) return;
-  await api('/chats/remove', { method: 'POST', body: JSON.stringify({ talker }) });
-  toast('已移除', 'success');
-  S.current = null;
-  document.getElementById('messages').innerHTML = '<div class="msg-center">左侧选择或搜索添加一个聊天</div>';
-  document.getElementById('chat-settings').innerHTML = '<div class="msg-center">选择聊天后在这里配置</div>';
-  await loadChats();
+  try {
+    await api('/chats/remove', { method: 'POST', body: JSON.stringify({ talker }) });
+    toast('已移除', 'success');
+    S.current = null;
+    await loadChats();
+  } catch (e) { toast('移除失败: ' + e.message, 'error'); }
 }
 
 // ── 自检 ──
@@ -1025,10 +1191,11 @@ async function runDebug() {
       talker, text, kind: c?.kind || 'private', conversationId: c?.conversationId || '', senderName: c?.name,
     }) });
     const res = r.result || {};
-    if (res.ok) toast(`成功：${res.parts} 条回复${res.images ? `，${res.images} 张图` : ''}${res.tools?.length ? `，工具 ${res.tools.join(',')}` : ''}`, 'success');
+    if (res.ok) toast(`成功：${res.parts} 条回复${res.images ? `，${res.images} 张图` : ''}${res.tools?.length ? `，工具 ${res.tools.join(',')}` : ''}${res.memories ? `，命中 ${res.memories} 条记忆` : ''}`, 'success');
     else toast(`未回复：${res.skipped || res.reason || '未知原因'}`, 'error');
   } catch (e) { toast('自检失败: ' + e.message, 'error'); }
-  loadHealth(); loadLogs();
+  await loadHealth();
+  await loadLogs();
 }
 
 // ── 插件 ──
@@ -1039,27 +1206,27 @@ async function loadPlugins() {
   const box = document.getElementById('plugins-container');
   box.innerHTML = S.plugins.map(p => `
     <div class="card plugin-card">
-      <div class="plugin-info">
+      <div class="plugin-info" style="min-width:0">
         <h4>${esc(p.name || p.id)}
           <span class="tag">${esc(p.id)}</span>
           <span class="tag ${p.builtin ? 'tag-blue' : 'tag-purple'}">${p.builtin ? '内置' : '自建'}</span>
           ${p.broken ? '<span class="tag tag-red">加载失败</span>' : ''}
         </h4>
-        <p>${esc(p.description || '')}</p>
-        <div class="model-chips">${(p.tools || []).map(t => `<span class="tag tag-green">${esc(t)}</span>`).join('')}</div>
+        <p>${esc(p.description || '（无描述）')}</p>
+        <div class="chips">${(p.tools || []).map(t => `<span class="tag tag-green">${esc(t)}</span>`).join('') || '<span class="hint dim">无工具</span>'}</div>
       </div>
       <div class="btn-group">
         <label class="toggle"><input type="checkbox" ${p.enabled ? 'checked' : ''} onchange="togglePlugin('${esc(p.id)}', this.checked)"><span class="slider"></span></label>
         <button class="btn btn-sm" onclick="editPlugin('${esc(p.id)}')">代码</button>
         ${p.builtin ? '' : `<button class="btn btn-sm btn-danger" onclick="removePlugin('${esc(p.id)}')">删除</button>`}
       </div>
-    </div>`).join('') || '<div class="msg-center">暂无插件</div>';
+    </div>`).join('') || '<div class="empty"><span class="big">🧩</span>暂无插件</div>';
 }
 async function togglePlugin(id, enabled) {
-  const cfg = S.config || await api('/config');
-  const list = new Set(cfg.plugins?.enabled || []);
-  if (enabled) list.add(id); else list.delete(id);
   try {
+    const cfg = S.config || await api('/config');
+    const list = new Set(cfg.plugins?.enabled || []);
+    if (enabled) list.add(id); else list.delete(id);
     await api('/config', { method: 'POST', body: JSON.stringify({ plugins: { enabled: [...list] } }) });
     await api('/plugins/reload', { method: 'POST', body: '{}' });
     toast(`插件 ${id} 已${enabled ? '启用' : '禁用'}`, 'success');
@@ -1075,13 +1242,14 @@ async function doReloadPlugins() {
 }
 async function showTools() {
   const d = await apiSafe('/tools');
-  openModal(`<h3>当前可用工具（${(d?.tools || []).length}）</h3>
-    ${(d?.tools || []).map(t => `<div style="margin-bottom:10px"><b>${esc(t.name)}</b> <span class="tag">${esc(t.pluginId)}</span><div class="hint">${esc(t.description)}</div></div>`).join('') || '<div class="hint">无</div>'}
+  const tools = d?.tools || [];
+  openModal(`<h3>当前可用工具（${tools.length}）</h3>
+    ${tools.map(t => `<div style="margin-bottom:12px"><b>${esc(t.name)}</b> <span class="tag">${esc(t.pluginId || '')}</span><div class="hint">${esc(t.description || '')}</div></div>`).join('') || '<div class="hint dim">无</div>'}
     <div class="modal-actions"><button class="btn" onclick="closeModal()">关闭</button></div>`);
 }
 function showScaffold() {
   openModal(`<h3>新建插件</h3>
-    <div class="form-group"><label>插件 ID（小写英文+连字符）</label><input id="pl-id" placeholder="my-plugin"></div>
+    <div class="form-group"><label>插件 ID（小写英文 + 连字符）</label><input id="pl-id" placeholder="my-plugin"></div>
     <div class="form-group"><label>名称</label><input id="pl-name" placeholder="我的插件"></div>
     <div class="form-group"><label>描述</label><input id="pl-desc" placeholder="这个插件能做什么"></div>
     <div class="modal-actions"><button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="createPlugin()">创建</button></div>`);
@@ -1102,19 +1270,26 @@ async function createPlugin() {
   } catch (e) { toast('创建失败: ' + e.message, 'error'); }
 }
 async function editPlugin(id) {
-  const code = await fetch('/api/plugins/code?id=' + encodeURIComponent(id)).then(r => r.text()).catch(() => '');
-  openModal(`<h3>插件代码: ${esc(id)}</h3>
-    <div class="form-group"><textarea id="pl-code" rows="18" style="font-family:Consolas,monospace;font-size:12px">${esc(code)}</textarea></div>
-    <div class="hint">保存后需点「重载插件」生效；内置插件代码只读。</div>
-    <div class="modal-actions"><button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="savePluginCode('${esc(id)}')">保存</button></div>`);
+  const d = await apiSafe('/plugins/code?id=' + encodeURIComponent(id));
+  if (!d) return;
+  const ro = d.builtin;
+  openModal(`<h3>插件代码：${esc(id)} ${ro ? '<span class="tag tag-blue">内置只读</span>' : ''}</h3>
+    <div class="form-group"><textarea id="pl-code" rows="18" style="font-family:var(--mono);font-size:12px" ${ro ? 'readonly' : ''}>${esc(d.code || '')}</textarea></div>
+    <div class="hint dim">${ro ? '内置插件不能直接改：先复制目录到 data/plugins 再改。' : '保存后会自动重载插件。'}</div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">${ro ? '关闭' : '取消'}</button>
+      ${ro ? '' : `<button class="btn btn-primary" onclick="savePluginCode('${esc(id)}')">保存并重载</button>`}
+    </div>`);
 }
 async function savePluginCode(id) {
   const code = document.getElementById('pl-code').value;
   try {
-    await fetch('/api/plugins/code?id=' + encodeURIComponent(id), { method: 'PUT', body: code });
-    toast('已保存，记得重载插件', 'success');
+    const resp = await fetch('/api/plugins/code?id=' + encodeURIComponent(id), { method: 'PUT', body: code });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
     closeModal();
-  } catch (e) { toast('保存失败', 'error'); }
+    await doReloadPlugins();
+    toast('已保存并重载', 'success');
+  } catch (e) { toast('保存失败: ' + e.message, 'error'); }
 }
 async function removePlugin(id) {
   if (!confirm(`删除插件 ${id}？`)) return;
@@ -1126,21 +1301,50 @@ async function removePlugin(id) {
 }
 
 // ── 日志 ──
-async function loadLogs() {
-  const d = await apiSafe('/logs?limit=200');
-  if (d) renderLogs(d.logs || [], ['log-list', 'dash-logs']);
-}
-function renderLogs(list, targets) {
-  const html = list.map(l => {
-    const cls = l.level === 'error' ? 'lvl-error' : l.level === 'warn' ? 'lvl-warn' : l.level === 'debug' ? 'lvl-debug' : 'lvl-info';
-    return `<div class="log-entry"><span class="ts">${new Date(l.ts).toLocaleTimeString('zh-CN', { hour12: false })}</span><span class="${cls}">[${l.level}]</span><span>${esc(l.msg)}</span></div>`;
-  }).join('');
-  for (const id of targets) {
-    const el = document.getElementById(id);
-    if (!el) continue;
-    if (id === 'log-list') { el.innerHTML = html; el.scrollTop = el.scrollHeight; }
-    else el.innerHTML = list.slice(-12).map(l => `<div class="log-entry"><span class="ts">${new Date(l.ts).toLocaleTimeString('zh-CN', { hour12: false })}</span><span>${esc(l.msg)}</span></div>`).join('');
+function mergeLogs(list) {
+  if (!list?.length) return;
+  for (const l of list) {
+    const last = LOGS[LOGS.length - 1];
+    if (last && last.ts === l.ts && last.msg === l.msg) continue;   // 去重，避免重渲染重复项
+    LOGS.push(l);
   }
+  if (LOGS.length > LOG_MAX) LOGS.splice(0, LOGS.length - LOG_MAX);
+}
+function logRow(l) {
+  const cls = l.level === 'error' ? 'lvl-error' : l.level === 'warn' ? 'lvl-warn' : l.level === 'debug' ? 'lvl-debug' : 'lvl-info';
+  return `<div class="log-entry"><span class="ts">${new Date(l.ts).toLocaleTimeString('zh-CN', { hour12: false })}</span><span class="lv ${cls}">[${esc(l.level)}]</span><span class="tx">${esc(l.msg)}</span></div>`;
+}
+function filteredLogs() {
+  const kw = (document.getElementById('log-filter')?.value || '').trim().toLowerCase();
+  const lv = document.getElementById('log-level')?.value || '';
+  const rank = { debug: 0, info: 1, warn: 2, error: 3 };
+  return LOGS.filter(l => {
+    if (lv && (rank[l.level] ?? 1) < rank[lv]) return false;
+    if (kw && !String(l.msg).toLowerCase().includes(kw)) return false;
+    return true;
+  });
+}
+function renderLogList() {
+  const el = document.getElementById('log-list');
+  if (!el) return;
+  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+  el.innerHTML = filteredLogs().map(logRow).join('') || '<div class="empty">没有匹配的日志</div>';
+  if (atBottom) el.scrollTop = el.scrollHeight;
+}
+function renderDashLogs() {
+  const el = document.getElementById('dash-logs');
+  if (!el) return;
+  el.innerHTML = LOGS.slice(-12).reverse().map(logRow).join('') || '<div class="empty">暂无日志</div>';
+}
+function applyLogFilter() { renderLogList(); }
+function clearLogs() { LOGS.length = 0; renderLogList(); renderDashLogs(); }
+async function loadLogs() {
+  const d = await apiSafe('/logs?limit=300');
+  if (!d) return;
+  LOGS.length = 0;
+  mergeLogs(d.logs || []);
+  renderLogList();
+  renderDashLogs();
 }
 function toggleStream() {
   const btn = document.getElementById('stream-btn');
@@ -1173,7 +1377,11 @@ async function streamLoop() {
           const line = buf.slice(0, at).trim();
           buf = buf.slice(at + 1);
           if (!line.startsWith('data:')) continue;
-          try { renderLogs([JSON.parse(line.slice(5))], ['log-list', 'dash-logs']); } catch {}
+          try {
+            mergeLogs([JSON.parse(line.slice(5))]);   // 追加，不再整体覆盖
+            renderLogList();
+            renderDashLogs();
+          } catch { /* ignore */ }
         }
       }
     } catch { /* aborted */ }
@@ -1182,35 +1390,24 @@ async function streamLoop() {
 }
 
 // ════════════ 记忆 ════════════
-const M = { scopes: [], talker: null, detail: null, tab: 'chat', member: null, searching: false };
+const M = { scopes: [], talker: null, detail: null, usage: null, tab: 'chat', member: null, searching: false, searchResult: [], urlApplied: false };
 
 async function loadMemory() {
   const d = await apiSafe('/memory');
   if (!d) return;
   M.scopes = d.stats?.items || [];
   document.getElementById('mem-scope-count').textContent = M.scopes.length;
-  document.getElementById('mem-stats').innerHTML = `
-    <div>会话记忆：<b>${d.stats.totalChat}</b> 条</div>
-    <div>成员记忆：<b>${d.stats.totalMember}</b> 条</div>
-    <div>即将遗忘：<b class="${d.stats.fading ? 'lvl-warn' : ''}">${d.stats.fading}</b> 条</div>`;
-  document.getElementById('mem-curve').innerHTML = `
-    琐碎 ≈ 3 天淡忘 · 一般 ≈ 2 周 · 重要 ≈ 1 个月 · 非常重要 ≈ 永久<br>
-    每次被回忆算一次复习，强度回升。低于阈值先进归档，可捞回。`;
-  document.getElementById('mem-scope-list').innerHTML = M.scopes.length ? M.scopes.map(s => `
-    <div class="chat-item ${M.talker === s.talker ? 'active' : ''}" onclick="memSelect('${esc(s.talker)}')">
-      <div style="min-width:0">
-        <div class="name">${esc(s.name || s.talker)}</div>
-        <div class="sub">${s.kind === 'group' ? '👥' : '👤'} 会话 ${s.chatCount} · 成员 ${s.memberMemories}</div>
-      </div>
-      <div class="right">
-        ${s.fading ? `<span class="tag tag-yellow">${s.fading} 将忘</span>` : '<span class="tag tag-green">稳定</span>'}
-      </div>
-    </div>`).join('') : '<div class="msg-center">还没有记忆<br><span class="hint">聊几句就会自动沉淀</span></div>';
+  document.getElementById('nav-mem').textContent = d.stats?.totalChat + d.stats?.totalMember || 0;
+  document.getElementById('mem-total').textContent = (d.stats?.totalChat || 0) + (d.stats?.totalMember || 0);
+  document.getElementById('mem-total-sub').textContent = `会话 ${d.stats?.totalChat || 0} · 成员 ${d.stats?.totalMember || 0} · ${M.scopes.length} 个会话`;
+  document.getElementById('mem-fading').textContent = d.stats?.fading || 0;
+  document.getElementById('mem-pinned').textContent = d.stats?.pinned || 0;
+  renderMemScopes();
 
-  // 自动选中第一个会话，避免一片空白（支持 ?talker=xxx 深链接）
   const want = new URLSearchParams(location.search).get('talker');
-  if (want && M.scopes.some(s => s.talker === want)) { if (M.talker !== want) memSelect(want); }
-  else if (!M.talker && M.scopes.length) memSelect(M.scopes[0].talker);
+  if (want && M.scopes.some(s => s.talker === want)) { if (M.talker !== want) await memSelect(want); }
+  else if (!M.talker && M.scopes.length) await memSelect(M.scopes[0].talker);
+  else if (M.talker) await memReload();
 }
 
 async function memSelect(talker) {
@@ -1220,13 +1417,21 @@ async function memSelect(talker) {
 }
 
 function renderMemScopes() {
-  document.getElementById('mem-scope-list').innerHTML = M.scopes.map(s => `
+  const el = document.getElementById('mem-scope-list');
+  if (!el) return;
+  if (!M.scopes.length) {
+    el.innerHTML = '<div class="empty"><span class="big">🧠</span>还没有记忆<br>聊几句就会自动沉淀</div>';
+    return;
+  }
+  el.innerHTML = M.scopes.map(s => `
     <div class="chat-item ${M.talker === s.talker ? 'active' : ''}" onclick="memSelect('${esc(s.talker)}')">
       <div style="min-width:0">
         <div class="name">${esc(s.name || s.talker)}</div>
-        <div class="sub">会话 ${s.chatCount} · 成员 ${s.memberMemories}</div>
+        <div class="sub">${s.kind === 'group' ? '👥' : '👤'} 会话 ${s.chatCount} · 成员 ${s.memberMemories}${s.pinned ? ` · 钉 ${s.pinned}` : ''}</div>
       </div>
-      <div class="right">${s.fading ? `<span class="tag tag-yellow">${s.fading}</span>` : ''}</div>
+      <div class="right">
+        ${s.fading ? `<span class="tag tag-yellow">${s.fading} 将忘</span>` : '<span class="tag tag-green">稳定</span>'}
+      </div>
     </div>`).join('');
 }
 
@@ -1236,16 +1441,16 @@ async function memReload() {
   if (!d) return;
   M.detail = d.detail;
   M.usage = d.usage;
-  // 深链接参数只在首次加载时生效一次
   if (!M.urlApplied) {
     M.urlApplied = true;
     const qs = new URLSearchParams(location.search);
-    const wantTab = qs.get('tab');
-    const wantMember = qs.get('member');
-    if (wantTab) M.tab = wantTab;
-    if (wantMember && M.detail.members?.[wantMember]) M.member = wantMember;
+    if (qs.get('tab')) M.tab = qs.get('tab');
+    const wm = qs.get('member');
+    if (wm && M.detail.members?.[wm]) M.member = wm;
   }
-  document.getElementById('mem-title').textContent = `${M.detail.name || M.talker}`;
+  const n = Object.keys(M.detail.members || {}).length;
+  document.getElementById('mem-title').textContent =
+    `${M.detail.name || M.talker}${n ? ` · ${n} 位成员` : ''}`;
   renderMemTabs();
   renderMemSide();
   renderMemList();
@@ -1253,17 +1458,16 @@ async function memReload() {
 
 function renderMemTabs() {
   const d = M.detail;
+  if (!d) return;
   const members = Object.entries(d.members || {});
   const tabs = [`<button class="btn btn-sm ${M.tab === 'chat' ? 'btn-primary' : ''}" onclick="memTab('chat')">会话记忆 ${d.chat.length}</button>`];
-  if (members.length) {
-    tabs.push(`<button class="btn btn-sm ${M.tab === 'members' ? 'btn-primary' : ''}" onclick="memTab('members')">群成员 ${members.length}</button>`);
-  }
+  if (members.length) tabs.push(`<button class="btn btn-sm ${M.tab === 'members' ? 'btn-primary' : ''}" onclick="memTab('members')">群成员 ${members.length}</button>`);
   tabs.push(`<button class="btn btn-sm ${M.tab === 'archive' ? 'btn-primary' : ''}" onclick="memTab('archive')">归档</button>`);
   document.getElementById('mem-tabs').innerHTML = tabs.join('');
 }
-
 function memTab(t) {
   M.tab = t;
+  M.searching = false;
   renderMemTabs();
   renderMemSide();
   renderMemList();
@@ -1272,36 +1476,41 @@ function memTab(t) {
 function renderMemSide() {
   const el = document.getElementById('mem-side');
   const d = M.detail;
+  if (!el || !d) return;
   const u = M.usage || {};
   const pct = Math.min(100, u.usagePercent || 0);
-  let html = `<h3 style="font-size:14px;color:var(--accent);margin-bottom:10px">上下文</h3>
-    <div>${(u.tokens || 0).toLocaleString()} tokens / ${(u.maxTokens || 0).toLocaleString()}</div>
-    <div style="height:6px;background:var(--surface2);border-radius:3px;margin:6px 0 4px">
-      <div style="height:6px;width:${Math.max(pct, 1)}%;background:${pct > 60 ? 'var(--red)' : 'var(--accent)'};border-radius:3px"></div>
-    </div>
-    <div class="hint">${u.messages || 0} 条消息 · 压缩阈值 ${(u.compressAtTokens || 0).toLocaleString()}</div>
-    <div class="btn-group" style="margin-top:8px">
-      <button class="btn btn-sm" onclick="memCompressCtx()">立即压缩</button>
-      <button class="btn btn-sm" onclick="memShowSummary()">看摘要</button>
+  let html = `
+    <div class="col-head" style="border-radius:0"><span class="t">上下文</span><span class="tag">${num(u.tokens || 0)} t</span></div>
+    <div style="padding:14px">
+      <div class="bar"><span style="width:${Math.max(pct, 1)}%;background:${pct > 60 ? 'var(--red)' : pct > 30 ? 'var(--yellow)' : 'var(--accent)'}"></span></div>
+      <div class="hint" style="margin-top:6px">${num(u.tokens || 0)} / ${num(u.maxTokens || 0)} tokens（${pct}%）</div>
+      <div class="hint dim">${u.messages || 0} 条消息 · 阈值 ${num(u.compressAtTokens || 0)}${u.willCompress ? ' · <b style="color:var(--yellow)">下次将自动压缩</b>' : ''}</div>
+      <div class="btn-group" style="margin-top:10px">
+        <button class="btn btn-sm" onclick="memCompressCtx()">立即压缩</button>
+        <button class="btn btn-sm" onclick="memShowSummary()">看摘要</button>
+      </div>
     </div>`;
 
   if (M.tab === 'members') {
     const members = Object.entries(d.members || {});
-    html += `<h3 style="font-size:14px;color:var(--accent);margin:16px 0 8px">成员</h3>`;
+    html += `<div class="col-head"><span class="t">群成员</span><span class="tag">${members.length}</span></div><div style="padding:10px 12px">`;
     html += members.map(([k, v]) => `
-      <div class="chat-item ${M.member === k ? 'active' : ''}" style="border-radius:6px" onclick="memPickMember('${esc(k)}')">
-        <div><div class="name">${esc(v.name || k)}</div><div class="sub">${v.memories.length} 条记忆</div></div>
+      <div class="chat-item ${M.member === k ? 'active' : ''}" style="border-radius:7px;border:1px solid var(--border);margin-bottom:6px" onclick="memPickMember('${esc(k)}')">
+        <div style="min-width:0"><div class="name">${esc(v.name || k)}</div><div class="sub">${v.memories.length} 条记忆</div></div>
+        <div class="right">${v.profile ? '<span class="tag tag-purple">有画像</span>' : ''}</div>
       </div>`).join('');
     if (M.member) {
       const box = d.members[M.member];
-      html += `<h3 style="font-size:13px;color:var(--accent);margin:14px 0 8px">${esc(box.name)} 的画像</h3>
-        <div class="hint" style="white-space:pre-wrap;line-height:1.6">${esc(box.profile || '（还没生成，点下面按钮）')}</div>
+      html += `<div class="divider"></div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:6px">${esc(box.name || M.member)} 的画像</div>
+        <div class="hint" style="white-space:pre-wrap;line-height:1.7">${esc(box.profile || '（还没生成）')}</div>
         <button class="btn btn-sm" style="margin-top:8px" onclick="memRebuildProfile('${esc(M.member)}')">重建画像</button>`;
     }
+    html += `</div>`;
   }
 
   if (M.tab === 'chat' || M.tab === 'members') {
-    html += `<h3 style="font-size:14px;color:var(--accent);margin:16px 0 8px">手动记一条</h3>
+    html += `<div class="col-head"><span class="t">手动记一条</span></div><div style="padding:12px">
       <div class="form-group"><textarea id="mem-new-text" rows="2" placeholder="例如：喜欢喝美式，不加糖"></textarea></div>
       <div class="form-row">
         <div class="form-group"><label>重要度</label><input id="mem-new-imp" type="number" min="0" max="1" step="0.05" value="0.8"></div>
@@ -1312,132 +1521,175 @@ function renderMemSide() {
           </select></div>
       </div>
       <div class="form-group"><input id="mem-new-tags" placeholder="标签，逗号分隔"></div>
-      <button class="btn btn-sm btn-primary" onclick="memAdd()">记下来</button>`;
+      <button class="btn btn-sm btn-primary" onclick="memAdd()">记下来</button>
+      <div class="hint dim" style="margin-top:6px">重要度 ≥ 0.85 会自动钉住，永不遗忘</div>
+    </div>`;
   }
   el.innerHTML = html;
 }
 
 function memPickMember(k) {
   M.member = k;
+  M.searching = false;
   renderMemSide();
   renderMemList();
 }
-
 function retentionColor(r) {
   if (r >= 0.75) return 'var(--green)';
   if (r >= 0.45) return 'var(--yellow)';
   return 'var(--red)';
 }
-
 function memCard(m, memberKey) {
   const r = m.retention ?? 1;
-  const labelCls = m.importance >= 0.85 ? 'tag-red' : m.importance >= 0.65 ? 'tag-yellow' : 'tag';
-  return `<div class="card" style="padding:10px;margin:0">
-    <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
-      <div style="min-width:0">
-        <div style="font-size:13px;line-height:1.5">${m.pinned ? '📌 ' : ''}${esc(m.text)}</div>
-        <div class="hint" style="margin-top:4px">
-          <span class="tag ${labelCls}">${esc(m.label)} ${Number(m.importance).toFixed(2)}</span>
-          <span class="tag">${esc(m.kind)}</span>
-          ${(m.tags || []).map(t => `<span class="tag tag-blue">${esc(t)}</span>`).join(' ')}
+  const labelCls = m.importance >= 0.85 ? 'tag-red' : m.importance >= 0.65 ? 'tag-yellow' : m.importance >= 0.4 ? 'tag-blue' : 'tag';
+  const mk = memberKey ? `'${esc(memberKey)}'` : 'null';
+  return `<div class="mem-card">
+    <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">
+      <div style="min-width:0;flex:1">
+        <div class="txt">${m.pinned ? '📌 ' : ''}${esc(m.text)}</div>
+        <div class="chips" style="margin-top:6px">
+          <span class="tag ${labelCls}">${esc(m.label || '')} ${Number(m.importance || 0).toFixed(2)}</span>
+          <span class="tag">${esc(m.kind || '')}</span>
+          ${(m.tags || []).map(t => `<span class="tag tag-blue">${esc(t)}</span>`).join('')}
           ${m.source === 'compressed' ? '<span class="tag tag-purple">压缩摘要</span>' : ''}
+          ${m.source === 'manual' ? '<span class="tag tag-cyan">手动</span>' : ''}
         </div>
-        <div style="display:flex;align-items:center;gap:6px;margin-top:6px">
-          <div style="flex:1;height:4px;background:var(--surface2);border-radius:2px;max-width:160px">
-            <div style="height:4px;width:${Math.max(2, r * 100)}%;background:${retentionColor(r)};border-radius:2px"></div>
-          </div>
-          <span class="hint">记忆强度 ${(r * 100).toFixed(0)}% · 已 ${m.ageHours}h · 上次回忆 ${m.idleHours}h 前</span>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:7px">
+          <div class="bar" style="flex:0 0 150px"><span style="width:${Math.max(2, r * 100)}%;background:${retentionColor(r)}"></span></div>
+          <span class="hint dim">强度 ${(r * 100).toFixed(0)}% · ${m.ageHours}h 前 · 上次回忆 ${m.idleHours}h 前</span>
         </div>
       </div>
-      <div class="btn-group" style="flex-direction:column">
-        <button class="btn btn-sm" onclick="memPin('${m.id}', ${memberKey ? `'${esc(memberKey)}'` : 'null'}, ${!m.pinned})">${m.pinned ? '取消钉住' : '钉住'}</button>
-        <button class="btn btn-sm" onclick="memEdit('${m.id}', ${memberKey ? `'${esc(memberKey)}'` : 'null'}, ${JSON.stringify(m.text).replace(/"/g, '&quot;')}, ${m.importance})">编辑</button>
-        <button class="btn btn-sm btn-danger" onclick="memDel('${m.id}', ${memberKey ? `'${esc(memberKey)}'` : 'null'})">忘掉</button>
+      <div class="mem-actions">
+        <button class="btn btn-sm" onclick="memPin('${m.id}', ${mk}, ${!m.pinned})">${m.pinned ? '取消钉住' : '钉住'}</button>
+        <button class="btn btn-sm" onclick="memEdit('${m.id}', ${mk})">编辑</button>
+        <button class="btn btn-sm btn-danger" onclick="memDel('${m.id}', ${mk})">忘掉</button>
       </div>
     </div>
   </div>`;
 }
-
 function renderMemList() {
   const box = document.getElementById('mem-list');
   const d = M.detail;
-  if (!d) { box.innerHTML = '<div class="msg-center">未选择会话</div>'; return; }
+  if (!box) return;
+  if (!d) { box.innerHTML = '<div class="empty"><span class="big">🧠</span>未选择会话</div>'; return; }
 
   if (M.searching) {
     const items = M.searchResult || [];
     box.innerHTML = items.length
-      ? items.map(i => memCard(i, i._scope === 'member' ? i._member : null)).join('')
-      : '<div class="msg-center">没搜到相关记忆</div>';
+      ? `<div class="hint dim" style="padding:2px 0">搜索到 ${items.length} 条 · <a href="#" onclick="memClearSearch();return false" style="color:var(--accent)">返回列表</a></div>` +
+        items.map(i => memCard(i, i._scope === 'member' ? (i._member || i.memberName) : null)).join('')
+      : '<div class="empty"><span class="big">🔎</span>没搜到相关记忆</div>';
     return;
   }
 
   if (M.tab === 'chat') {
-    const items = [...d.chat].sort((a, b) => b.importance - a.importance);
+    const items = [...d.chat].sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.importance - a.importance);
     box.innerHTML = items.length ? items.map(m => memCard(m, null)).join('')
-      : '<div class="msg-center">这个会话还没有记忆<br><span class="hint">聊几句就会自动沉淀</span></div>';
+      : '<div class="empty"><span class="big">🧠</span>这个会话还没有记忆<br>聊几句就会自动沉淀</div>';
     return;
   }
 
   if (M.tab === 'members') {
-    if (!M.member) { box.innerHTML = '<div class="msg-center">右侧选一个成员</div>'; return; }
-    const box2 = d.members[M.member];
-    const items = [...(box2?.memories || [])].sort((a, b) => b.importance - a.importance);
+    if (!M.member) { box.innerHTML = '<div class="empty"><span class="big">👥</span>右侧选一个成员</div>'; return; }
+    const b = d.members[M.member];
+    const items = [...(b?.memories || [])].sort((a, b2) => (b2.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b2.importance - a.importance);
     box.innerHTML = items.length ? items.map(m => memCard(m, M.member)).join('')
-      : '<div class="msg-center">这位成员还没有记忆</div>';
+      : '<div class="empty"><span class="big">👤</span>这位成员还没有记忆</div>';
     return;
   }
 
-  box.innerHTML = '<div class="msg-center">正在加载归档…</div>';
+  box.innerHTML = '<div class="empty">正在加载归档…</div>';
   loadArchive();
 }
-
 async function loadArchive() {
   const d = await apiSafe('/memory/archive?talker=' + encodeURIComponent(M.talker));
   const items = d?.items || [];
   const box = document.getElementById('mem-list');
+  if (!box) return;
   box.innerHTML = items.length ? items.map(m => `
-    <div class="card" style="padding:10px;margin:0">
-      <div style="display:flex;justify-content:space-between;gap:8px">
-        <div>
-          <div style="font-size:13px">${esc(m.text)}</div>
-          <div class="hint" style="margin-top:4px">${esc(m.label)} · 遗忘前重要度 ${Number(m.importance).toFixed(2)} · 强度 ${((m._retention ?? 0) * 100).toFixed(0)}%</div>
+    <div class="mem-card">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">
+        <div style="min-width:0">
+          <div class="txt">${esc(m.text)}</div>
+          <div class="chips" style="margin-top:6px">
+            <span class="tag">${esc(m.label || '')} ${Number(m.importance || 0).toFixed(2)}</span>
+            <span class="tag">${esc((m._scopeLabel || '').replace('-manual', ''))}</span>
+            ${(m.tags || []).map(t => `<span class="tag tag-blue">${esc(t)}</span>`).join('')}
+          </div>
+          <div class="hint dim" style="margin-top:6px">遗忘时强度 ${((m._retention ?? 0) * 100).toFixed(0)}% · ${fmtTime(m._forgottenAt)}</div>
         </div>
-        <button class="btn btn-sm" onclick="memRestore('${m.id}')">捞回来</button>
+        <div class="mem-actions"><button class="btn btn-sm" onclick="memRestore('${m.id}')">捞回来</button></div>
       </div>
-    </div>`).join('') : '<div class="msg-center">归档为空</div>';
+    </div>`).join('') : '<div class="empty"><span class="big">🗄️</span>归档为空</div>';
 }
 
 async function memPin(id, memberKey, pinned) {
-  await api('/memory/update', { method: 'POST', body: JSON.stringify({ talker: M.talker, id, memberKey, patch: { pinned } }) });
-  toast(pinned ? '已钉住（不再自动遗忘）' : '已取消钉住', 'success');
-  memReload();
+  try {
+    await api('/memory/update', { method: 'POST', body: JSON.stringify({ talker: M.talker, id, memberKey, patch: { pinned } }) });
+    toast(pinned ? '已钉住（不再自动遗忘）' : '已取消钉住', 'success');
+    await memReload();
+    await loadMemory();
+  } catch (e) { toast('操作失败: ' + e.message, 'error'); }
 }
-
-function memEdit(id, memberKey, text, importance) {
-  const t = prompt('修改记忆内容：', text);
-  if (t === null) return;
-  const imp = prompt('重要度 0~1：', String(importance));
-  if (imp === null) return;
-  api('/memory/update', { method: 'POST', body: JSON.stringify({ talker: M.talker, id, memberKey, patch: { text: t, importance: Number(imp) } }) })
-    .then(() => { toast('已更新', 'success'); memReload(); })
-    .catch(e => toast('更新失败: ' + e.message, 'error'));
+function memEdit(id, memberKey) {
+  const list = memberKey ? M.detail?.members?.[memberKey]?.memories : M.detail?.chat;
+  const m = (list || []).find(x => x.id === id);
+  if (!m) { toast('找不到这条记忆', 'error'); return; }
+  openModal(`<h3>编辑记忆</h3>
+    <div class="form-group"><label>内容</label><textarea id="ed-text" rows="3">${esc(m.text)}</textarea></div>
+    <div class="form-row">
+      <div class="form-group"><label>重要度 0~1</label><input id="ed-imp" type="number" min="0" max="1" step="0.05" value="${m.importance}"></div>
+      <div class="form-group"><label>类型</label>
+        <select id="ed-kind">
+          ${['fact|事实', 'preference|偏好', 'profile|画像', 'relation|关系', 'event|事件'].map(o => {
+            const [v, t] = o.split('|');
+            return `<option value="${v}" ${m.kind === v ? 'selected' : ''}>${t}</option>`;
+          }).join('')}
+        </select></div>
+    </div>
+    <div class="form-group"><label>标签（逗号分隔）</label><input id="ed-tags" value="${esc((m.tags || []).join(', '))}"></div>
+    <div class="form-group"><label class="checkline"><input type="checkbox" id="ed-reset" checked> 重置衰减（当成刚想起一次）</label></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">取消</button>
+      <button class="btn btn-primary" onclick="memSave('${esc(id)}', ${memberKey ? `'${esc(memberKey)}'` : 'null'})">保存</button>
+    </div>`);
 }
-
+async function memSave(id, memberKey) {
+  try {
+    await api('/memory/update', { method: 'POST', body: JSON.stringify({
+      talker: M.talker, id, memberKey,
+      patch: {
+        text: document.getElementById('ed-text').value.trim(),
+        importance: Number(document.getElementById('ed-imp').value),
+        kind: document.getElementById('ed-kind').value,
+        tags: document.getElementById('ed-tags').value.split(',').map(s => s.trim()).filter(Boolean),
+        resetDecay: document.getElementById('ed-reset').checked,
+      },
+    }) });
+    closeModal();
+    toast('已更新', 'success');
+    await memReload();
+  } catch (e) { toast('更新失败: ' + e.message, 'error'); }
+}
 async function memDel(id, memberKey) {
   if (!confirm('忘掉这条记忆？（会进归档，可捞回）')) return;
-  await api('/memory/delete', { method: 'POST', body: JSON.stringify({ talker: M.talker, id, memberKey }) });
-  toast('已忘掉', 'success');
-  memReload(); loadMemory();
+  try {
+    await api('/memory/delete', { method: 'POST', body: JSON.stringify({ talker: M.talker, id, memberKey }) });
+    toast('已忘掉', 'success');
+    await memReload();
+    await loadMemory();
+  } catch (e) { toast('操作失败: ' + e.message, 'error'); }
 }
-
 async function memRestore(id) {
-  await api('/memory/restore', { method: 'POST', body: JSON.stringify({ talker: M.talker, id }) });
-  toast('已捞回', 'success');
-  memReload();
+  try {
+    await api('/memory/restore', { method: 'POST', body: JSON.stringify({ talker: M.talker, id }) });
+    toast('已捞回', 'success');
+    await memReload();
+    await loadMemory();
+  } catch (e) { toast('操作失败: ' + e.message, 'error'); }
 }
-
 async function memAdd() {
-  const text = document.getElementById('mem-new-text').value.trim();
+  const text = document.getElementById('mem-new-text')?.value.trim();
   if (!text) { toast('内容不能为空', 'error'); return; }
   const importance = Number(document.getElementById('mem-new-imp').value) || 0.8;
   const kind = document.getElementById('mem-new-kind').value;
@@ -1447,37 +1699,36 @@ async function memAdd() {
   try {
     await api('/memory/add', { method: 'POST', body: JSON.stringify({ talker: M.talker, memberKey, memberName, text, importance, kind, tags }) });
     toast('已记下', 'success');
-    memReload(); loadMemory();
+    await memReload();
+    await loadMemory();
   } catch (e) { toast('失败: ' + e.message, 'error'); }
 }
-
 async function memSearch() {
   const q = document.getElementById('mem-search').value.trim();
-  if (!q) return;
+  if (!q) { memClearSearch(); return; }
   const d = await apiSafe('/memory/search', {
     method: 'POST',
     body: JSON.stringify({ talker: M.talker, query: q, memberKey: M.tab === 'members' ? M.member : null, limit: 30 }),
   });
+  if (!d) return;
   M.searching = true;
-  M.searchResult = d?.items || [];
+  M.searchResult = d.items || [];
   renderMemList();
 }
-
 function memClearSearch() {
   M.searching = false;
-  document.getElementById('mem-search').value = '';
+  const el = document.getElementById('mem-search');
+  if (el) el.value = '';
   renderMemList();
 }
-
 async function memForget(dry) {
   const r = await apiSafe('/memory/forget', { method: 'POST', body: JSON.stringify({ dryRun: dry }) });
   if (!r) return;
   document.getElementById('mem-lastop').textContent =
     `${dry ? '预演' : '执行'}：扫描 ${r.scanned} 条，遗忘 ${r.forgotten.length} 条，保留 ${r.kept} 条`;
   toast(dry ? `预演：会遗忘 ${r.forgotten.length} 条` : `已遗忘 ${r.forgotten.length} 条（已归档）`, 'success');
-  loadMemory(); if (M.talker) memReload();
+  await loadMemory();
 }
-
 async function memSweep() {
   toast('巡检中…', 'info');
   const r = await apiSafe('/memory/sweep', { method: 'POST', body: '{}' });
@@ -1485,50 +1736,83 @@ async function memSweep() {
   document.getElementById('mem-lastop').textContent =
     `全库巡检：遗忘 ${r.forget?.forgotten?.length || 0} 条，压缩 ${r.compact?.length || 0} 个会话`;
   toast('巡检完成', 'success');
-  loadMemory(); if (M.talker) memReload();
+  await loadMemory();
 }
-
+async function memDedupe() {
+  if (!M.talker) { toast('先选一个会话', 'error'); return; }
+  toast('整理中…', 'info');
+  const r = await apiSafe('/memory/dedupe', { method: 'POST', body: JSON.stringify({ talker: M.talker }) });
+  if (!r) return;
+  const cut = (r.chat || 0) + (r.memberCut || 0);
+  toast(cut ? `已合并 ${cut} 条重复记忆` : '没有发现重复记忆', cut ? 'success' : 'info');
+  await memReload();
+  await loadMemory();
+}
 async function memCompact() {
-  if (!M.talker) return;
+  if (!M.talker) { toast('先选一个会话', 'error'); return; }
   toast('压缩中…', 'info');
   const r = await apiSafe('/memory/compact', { method: 'POST', body: JSON.stringify({ talker: M.talker }) });
   if (!r) return;
-  toast(`已合并 ${r.merged} 条为摘要`, 'success');
-  memReload(); loadMemory();
+  toast(r.merged ? `已合并 ${r.merged} 条为摘要` : '没有需要压缩的记忆', r.merged ? 'success' : 'info');
+  await memReload();
+  await loadMemory();
 }
-
+async function memClear() {
+  if (!M.talker) { toast('先选一个会话', 'error'); return; }
+  if (!confirm('清空这个会话的全部记忆？（会进归档，可在「归档」里捞回）')) return;
+  try {
+    const r = await api('/memory/clear', { method: 'POST', body: JSON.stringify({ talker: M.talker }) });
+    toast(`已清空 ${r.archived} 条记忆（已归档）`, 'success');
+    await memReload();
+    await loadMemory();
+  } catch (e) { toast('清空失败: ' + e.message, 'error'); }
+}
 async function memRebuildProfile(memberKey) {
   toast('生成画像中…', 'info');
   const r = await apiSafe('/memory/profile', { method: 'POST', body: JSON.stringify({ talker: M.talker, memberKey }) });
   toast(r?.ok ? '画像已更新' : '生成失败', r?.ok ? 'success' : 'error');
-  memReload();
+  await memReload();
 }
-
 async function memCompressCtx() {
-  if (!M.talker) return;
+  if (!M.talker) { toast('先选一个会话', 'error'); return; }
   toast('压缩上下文中…', 'info');
   const r = await apiSafe('/context/compress', { method: 'POST', body: JSON.stringify({ talker: M.talker, force: true }) });
   if (!r) return;
   if (r.summary) toast(`已把 ${r.compressed} 条旧消息压成摘要（${r.beforeTokens}→${r.afterTokens} tokens）`, 'success');
-  else toast('未压缩：' + (r.skipped || '消息太少') + (r.error ? ' — ' + r.error : ''), 'info');
-  memReload();
+  else toast('未压缩：' + (r.error || r.skipped || '消息太少'), 'info');
+  await memReload();
 }
-
 async function memShowSummary() {
   const r = await apiSafe('/context/usage?talker=' + encodeURIComponent(M.talker));
-  const s = r?.usage?.summary || '';
+  if (!r) return;
+  const s = r.usage?.summary || '';
   openModal(`<h3>上下文摘要</h3>
-    <div class="hint" style="margin-bottom:8px">${r?.usage?.compressedCount || 0} 条消息已被压缩，当前摘要约 ${r?.usage?.summaryTokens || 0} tokens</div>
+    <div class="hint" style="margin-bottom:10px">${r.usage?.compressedCount || 0} 条消息已被压缩，当前摘要约 ${r.usage?.summaryTokens || 0} tokens</div>
     <div class="form-group"><textarea id="sum-edit" rows="10">${esc(s || '（还没有摘要）')}</textarea></div>
-    <div class="modal-actions"><button class="btn" onclick="closeModal()">关闭</button></div>`);
+    <div class="hint dim">可以直接改写，改完点保存会立即生效。</div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">关闭</button>
+      <button class="btn btn-primary" onclick="memSaveSummary()">保存摘要</button>
+    </div>`);
+}
+async function memSaveSummary() {
+  try {
+    await api('/context/summary', { method: 'PUT', body: JSON.stringify({ talker: M.talker, summary: document.getElementById('sum-edit').value }) });
+    closeModal();
+    toast('摘要已保存', 'success');
+    await memReload();
+  } catch (e) { toast('保存失败: ' + e.message, 'error'); }
 }
 
 // ── 启动 ──
+async function refreshLight() {
+  await loadHealth();
+  renderDashboard();
+}
 (async function boot() {
   await refreshAll();
   const page = (location.hash || '').replace('#', '');
-  if (page) activatePage(page);
-  if (page === 'memory') loadMemory();
+  if (page && document.getElementById('page-' + page)) activatePage(page);
   setInterval(refreshLight, 8000);
   setInterval(() => { if (S.current) loadChats(); }, 30000);
 })();

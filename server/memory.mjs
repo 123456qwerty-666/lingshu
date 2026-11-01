@@ -42,7 +42,7 @@ const DEFAULT_MEMORY_CONFIG = {
     accessBoost: 0.55,        // 每复习一次的稳定性增益
     touchCooldownMs: 60 * 1000,
   },
-  retrieve: { maxChat: 8, maxMember: 6, minScore: 0.18 },
+  retrieve: { maxChat: 6, maxMember: 4, minScore: 0.18 },
   tag: {
     maxItemsPerTurn: 4,
     minImportance: 0.12,      // 低于这个直接不存
@@ -226,7 +226,10 @@ export function addMemories(talker, items, { meta, memberKey = null, memberName 
     if (!text) continue;
     const importance = clamp01(raw.importance ?? 0.5);
 
-    const dup = bucket.find(m => similarity(m.text, text) > 0.82);
+    // 0.7 而不是 0.82：模型每轮的措辞会略有差别
+    // （「庞宇轩今年16岁，正在读初三」 vs 「庞宇轩，16岁，读初三」），
+    // 阈值太高就会把同一件事存成好几条
+    const dup = bucket.find(m => similarity(m.text, text) >= DUP_THRESHOLD);
     if (dup) {
       dup.importance = clamp01(Math.max(dup.importance, importance) + 0.05);
       dup.label = labelFor(dup.importance);
@@ -238,7 +241,7 @@ export function addMemories(talker, items, { meta, memberKey = null, memberName 
       continue;
     }
 
-    const cross = siblings.find(m => similarity(m.text, text) > 0.82);
+    const cross = siblings.find(m => similarity(m.text, text) >= DUP_THRESHOLD);
     if (cross) {
       // 别处已经有了：只提升重要度与复习次数，不重复存
       cross.importance = clamp01(Math.max(cross.importance, importance));
@@ -261,6 +264,9 @@ export function addMemories(talker, items, { meta, memberKey = null, memberName 
   saveScope(scope);
   return added;
 }
+
+/** 文本相似度达到这个值就视为「同一件事」，合并而不是重复存 */
+const DUP_THRESHOLD = 0.7;
 
 function bigrams(text) {
   const s = String(text || '').toLowerCase().replace(/[\s，。！？、,.!?;；:："'（）()【】\[\]]+/g, '');
@@ -311,7 +317,10 @@ export function searchMemories(talker, { query = '', memberKey = null, limit = 8
   });
 
   scored.sort((a, b) => b._score - a._score);
-  const picked = scored.filter(x => x._score >= mc.retrieve.minScore).slice(0, limit);
+  // 一个关键词都没命中时，只靠留存率/重要度会把大量无关记忆硬塞进提示词，
+  // 所以这种情况把门槛抬高（只留真正重要或刚发生过的事）
+  const minScore = q.size ? mc.retrieve.minScore : Math.max(mc.retrieve.minScore, 0.55);
+  const picked = scored.filter(x => x._score >= minScore).slice(0, limit);
 
   if (touch && picked.length) touchMemories(talker, picked.map(p => ({ id: p.id, scope: p._scope, member: p._member })));
   return picked;
@@ -402,6 +411,7 @@ export function runForgetting({ talker = null, dryRun = false, cfg = null } = {}
     const now = nowTs();
     const archive = loadArchive(scope.talker);
     let changed = false;
+    let boxKey = '';
 
     const sweep = (list, label) => {
       const keep = [];
@@ -417,7 +427,14 @@ export function runForgetting({ talker = null, dryRun = false, cfg = null } = {}
           });
           if (!dryRun) {
             if (mc.archiveInsteadOfDelete) {
-              archive.items.push({ ...mem, _forgottenAt: now, _retention: ret, _scopeLabel: label });
+              archive.items.push({
+                ...mem,
+                _forgottenAt: now,
+                _retention: ret,
+                _scopeLabel: label,
+                _scope: label === 'chat' ? 'chat' : 'member',
+                _member: label === 'chat' ? '' : (boxKey || ''),
+              });
               if (archive.items.length > 600) archive.items = archive.items.slice(-600);
               report.archived++;
             }
@@ -435,9 +452,11 @@ export function runForgetting({ talker = null, dryRun = false, cfg = null } = {}
     };
 
     const newChat = sweep(scope.chat, 'chat');
-    for (const box of Object.values(scope.members || {})) {
+    for (const [wxid, box] of Object.entries(scope.members || {})) {
+      boxKey = wxid;
       box.memories = sweep(box.memories, 'member');
     }
+    boxKey = '';
     if (!dryRun) {
       scope.chat = newChat;
       if (!dryRun && archive.items.length) saveArchive(scope.talker, archive);
@@ -661,18 +680,20 @@ export async function observeTurn({
 }
 
 // ── 后台管理所需的查询 ────────────────────────────────────
-export function listScopes() {
+export function listScopes(cfg = null) {
   const out = [];
+  const config = cfg || {};
   for (const fp of listScopeFiles()) {
     const s = readJson(fp, null);
     if (!s?.talker) continue;
     const now = nowTs();
-    const mc = { decay: DEFAULT_MEMORY_CONFIG.decay };
+    const mc = memoryConfig(config, s.talker);
     const chatCount = s.chat?.length || 0;
     const memberCount = Object.keys(s.members || {}).length;
     const memberMemories = Object.values(s.members || {}).reduce((n, b) => n + (b.memories?.length || 0), 0);
-    const fading = [...(s.chat || []), ...Object.values(s.members || {}).flatMap(b => b.memories || [])]
-      .filter(m => retention(m, now, mc.decay) < 0.4).length;
+    const allMems = [...(s.chat || []), ...Object.values(s.members || {}).flatMap(b => b.memories || [])];
+    const fading = allMems.filter(m => retention(m, now, mc.decay) < 0.4).length;
+    const pinned = allMems.filter(m => m.pinned || m.importance >= mc.pinImportance).length;
     out.push({
       talker: s.talker,
       name: s.name,
@@ -682,6 +703,7 @@ export function listScopes() {
       memberMemories,
       total: chatCount + memberMemories,
       fading,
+      pinned,
       stats: s.stats || {},
       updatedAt: s.updatedAt,
     });
@@ -689,13 +711,15 @@ export function listScopes() {
   return out.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-export function getScopeDetail(talker, { withRetention = true } = {}) {
+export function getScopeDetail(talker, { withRetention = true, cfg = null } = {}) {
   const scope = loadScope(talker);
   const now = nowTs();
+  // 用该聊天自己的衰减参数，否则后台看到的强度会和实际遗忘行为对不上
+  const decay = memoryConfig(cfg || {}, talker).decay;
   const decorate = (m) => ({
     ...m,
-    retention: Number(retention(m, now).toFixed(3)),
-    stabilityHours: Math.round(stabilityHours(m)),
+    retention: Number(retention(m, now, decay).toFixed(3)),
+    stabilityHours: Math.round(stabilityHours(m, decay)),
     ageHours: Math.round((now - (m.createdAt || now)) / 3600000),
     idleHours: Math.round((now - (m.lastAccessAt || m.createdAt || now)) / 3600000),
   });
@@ -742,7 +766,13 @@ export function deleteMemory(talker, id, { memberKey = null, archive = true } = 
   const [mem] = list.splice(idx, 1);
   if (archive) {
     const ar = loadArchive(talker);
-    ar.items.push({ ...mem, _forgottenAt: nowTs(), _scopeLabel: memberKey ? 'member-manual' : 'chat-manual' });
+    ar.items.push({
+      ...mem,
+      _forgottenAt: nowTs(),
+      _scopeLabel: memberKey ? 'member-manual' : 'chat-manual',
+      _scope: memberKey ? 'member' : 'chat',
+      _member: memberKey || '',
+    });
     saveArchive(talker, ar);
   }
   saveScope(scope);
@@ -763,21 +793,31 @@ export function restoreFromArchive(talker, id) {
   const scope = loadScope(talker);
   mem.lastAccessAt = nowTs();
   mem.createdAt = mem.createdAt || nowTs();
-  const isMember = mem._scopeLabel?.startsWith('member') && mem.memberName;
-  const key = Object.entries(scope.members || {}).find(([, v]) => v.name === mem.memberName)?.[0];
-  if (isMember && key) scope.members[key].memories.push(mem);
-  else scope.chat.push(mem);
+
+  // 优先用归档时记下的归属，退回按昵称匹配，避免「捞回来」串桶
+  const wantMember = mem._scope === 'member' ? (mem._member || '') : '';
+  const key = wantMember && scope.members?.[wantMember]
+    ? wantMember
+    : (wantMember || (mem._scopeLabel || '').startsWith('member'))
+      ? (Object.entries(scope.members || {}).find(([, v]) => v.name === mem.memberName)?.[0] || '')
+      : '';
+  if (key) {
+    scope.members[key].memories.push(mem);
+  } else {
+    scope.chat.push(mem);
+  }
   saveScope(scope);
   return true;
 }
 
-export function memoryStats() {
-  const scopes = listScopes();
+export function memoryStats(cfg = null) {
+  const scopes = listScopes(cfg);
   return {
     scopes: scopes.length,
     totalChat: scopes.reduce((n, s) => n + s.chatCount, 0),
     totalMember: scopes.reduce((n, s) => n + s.memberMemories, 0),
     fading: scopes.reduce((n, s) => n + s.fading, 0),
+    pinned: scopes.reduce((n, s) => n + (s.pinned || 0), 0),
     items: scopes,
   };
 }
@@ -787,7 +827,7 @@ export async function sweepAll({ aiClient = null, cfg = null } = {}) {
   const config = cfg || await loadConfig();
   const forget = runForgetting({ cfg: config });
   const compactResults = [];
-  for (const s of listScopes()) {
+  for (const s of listScopes(config)) {
     const mc = memoryConfig(config, s.talker);
     if (!mc.enabled) continue;
     if (s.chatCount > mc.maxChatMemories || s.memberMemories > mc.maxMemberMemories * Math.max(1, s.memberCount)) {
@@ -795,6 +835,81 @@ export async function sweepAll({ aiClient = null, cfg = null } = {}) {
     }
   }
   return { forget, compact: compactResults };
+}
+
+/**
+ * 整理重复记忆：把「说法不同但其实是同一件事」的条目合并掉。
+ * 早期阈值偏严，库里可能已经攒了不少近似重复，用它做一次瘦身。
+ */
+export function dedupeScope(talker, { dryRun = false } = {}) {
+  const scope = loadScope(talker);
+  const report = { chat: 0, members: {}, merged: 0 };
+
+  const dedupe = (list) => {
+    if (!Array.isArray(list) || list.length < 2) return list;
+    const kept = [];
+    for (const mem of [...list].sort((a, b) => (b.importance || 0) - (a.importance || 0))) {
+      const dup = kept.find(k => similarity(k.text, mem.text) >= DUP_THRESHOLD);
+      if (!dup) { kept.push(mem); continue; }
+      // 合并进保留的那条：取更长更完整的说法、更高的强度、并集标签
+      if (String(mem.text || '').length > String(dup.text || '').length) dup.text = mem.text;
+      dup.importance = clamp01(Math.max(dup.importance || 0, mem.importance || 0) + 0.03);
+      dup.label = labelFor(dup.importance);
+      dup.accessCount = Math.max(dup.accessCount || 0, mem.accessCount || 0) + 1;
+      dup.lastAccessAt = Math.max(dup.lastAccessAt || 0, mem.lastAccessAt || 0);
+      dup.createdAt = Math.min(dup.createdAt || Date.now(), mem.createdAt || Date.now());
+      dup.tags = [...new Set([...(dup.tags || []), ...(mem.tags || [])])].slice(0, 6);
+      dup.mergedFrom = (dup.mergedFrom || 0) + (mem.mergedFrom || 0) + 1;
+      if (mem.pinned) dup.pinned = true;
+      report.merged++;
+    }
+    return kept;
+  };
+
+  const beforeChat = scope.chat.length;
+  const nextChat = dedupe(scope.chat);
+  report.chat = beforeChat - nextChat.length;
+
+  const nextMembers = {};
+  for (const [wxid, box] of Object.entries(scope.members || {})) {
+    const before = (box.memories || []).length;
+    const next = dedupe(box.memories);
+    report.members[wxid] = before - next.length;
+    nextMembers[wxid] = { ...box, memories: next };
+  }
+
+  if (!dryRun && (report.chat || Object.values(report.members).some(n => n > 0))) {
+    scope.chat = nextChat;
+    scope.members = nextMembers;
+    saveScope(scope);
+  }
+  return report;
+}
+
+/** 清空某个会话的全部记忆（先进归档，可捞回） */
+export function clearScope(talker, { archive = true } = {}) {
+  const scope = loadScope(talker);
+  let n = 0;
+  if (archive) {
+    const ar = loadArchive(talker);
+    for (const m of scope.chat) {
+      ar.items.push({ ...m, _forgottenAt: nowTs(), _scopeLabel: 'chat-manual', _scope: 'chat', _member: '' });
+      n++;
+    }
+    for (const [wxid, box] of Object.entries(scope.members || {})) {
+      for (const m of box.memories || []) {
+        ar.items.push({ ...m, _forgottenAt: nowTs(), _scopeLabel: 'member-manual', _scope: 'member', _member: wxid });
+        n++;
+      }
+    }
+    if (ar.items.length > 600) ar.items = ar.items.slice(-600);
+    if (n) saveArchive(talker, ar);
+  }
+  scope.chat = [];
+  for (const box of Object.values(scope.members || {})) box.memories = [];
+  scope.stats = { ...(scope.stats || {}), clearedAt: nowTs() };
+  saveScope(scope);
+  return n;
 }
 
 export { DEFAULT_MEMORY_CONFIG };

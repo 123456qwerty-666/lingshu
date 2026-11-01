@@ -13,7 +13,7 @@ export const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 const SECRETS_DIR = path.join(DATA_DIR, 'secrets');
 
 export const DEFAULT_CONFIG = {
-  app: { name: '灵枢 AI 中枢', version: '0.2.0', port: 17890, bind: '127.0.0.1' },
+  app: { name: '灵枢 AI 中枢', version: '0.4.0', port: 17890, bind: '127.0.0.1' },
   wechat: {
     readerUrl: 'http://127.0.0.1:5031',
     hookUrl: 'http://127.0.0.1:30001',
@@ -25,7 +25,7 @@ export const DEFAULT_CONFIG = {
     triggerMode: 'smart',         // smart | mention | prefix | all | off
     wakeWords: ['AI', '灵枢', 'bot'],
     whitelist: { groups: [], private: [] },   // 兼容字段，chats 为空时生效
-    reply: { maxCharsPerMessage: 500, maxMessagesPerTurn: 2, minIntervalMs: 1200 },
+    reply: { maxCharsPerMessage: 500, maxMessagesPerTurn: 3, minIntervalMs: 1200 },
     media: { maxImagesPerTurn: 4, autoViewImages: true, autoSendImages: true },
   },
   ai: {

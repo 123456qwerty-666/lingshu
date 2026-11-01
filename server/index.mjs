@@ -21,8 +21,9 @@ import { ai, setConfigSnapshot, endpoint, friendlyAIError } from './ai.mjs';
 import { router, ChatContext } from './router.mjs';
 import {
   memoryConfig, buildMemoryPrompt, observeTurn, sweepAll, runForgetting, compactScope,
-  listScopes, getScopeDetail, memoryStats, updateMemory, deleteMemory,
-  getArchive, restoreFromArchive, rebuildProfile, addMemories, searchMemories, MEMORY_LABELS,
+  listScopes, getScopeDetail, memoryStats, updateMemory, deleteMemory, clearScope,
+  getArchive, restoreFromArchive, rebuildProfile, addMemories, searchMemories, dedupeScope,
+  MEMORY_LABELS,
 } from './memory.mjs';
 import { compressContext, contextUsage } from './compressor.mjs';
 import { listPersonasBrief, getPersona } from './personas.mjs';
@@ -399,7 +400,20 @@ function fallbackReplyFromTools(toolRuns = []) {
   if (page) {
     return `我读了 ${page.result.url}\n${String(page.result.text).slice(0, 300)}…\n（原文较长，想看哪部分告诉我）`;
   }
+  const img = [...toolRuns].reverse().find(t => (t.result?.path || t.result?.url) && /image|gen/i.test(t.name));
+  if (img) {
+    return `图已经画好了，你看一下${t0name(img.result) ? `：${t0name(img.result)}` : ''}`;
+  }
+  const any = [...toolRuns].reverse().find(t => t.result && t.result.success !== false);
+  if (any) {
+    const text = String(any.result.text || any.result.content || any.result.message || '').slice(0, 400);
+    if (text) return `（${any.name}）${text}`;
+  }
   return '';
+}
+
+function t0name(r) {
+  return String(r?.path ? path.basename(r.path) : r?.url || '').slice(0, 80);
 }
 
 function withImageNotice(messages, count, reason) {  const out = [...messages];
@@ -809,6 +823,8 @@ async function route(req, res) {
     const cfg = await loadConfig();
     const current = cfg.chats?.[talker] || { name: talker, kind: 'private', conversationId: '', enabled: true };
     const merged = { ...current, ...patch };
+    // 手动改过人设文本后，预设人格标签就失效了，别再显示成「大肥鱼」
+    if (patch.persona !== undefined && patch.persona !== current.persona) merged.personaId = null;
     await saveConfig({ chats: { [talker]: merged } });
     log(`更新聊天设置: ${talker}`);
     sendJson(res, 200, { ok: true, chat: merged });
@@ -995,8 +1011,7 @@ async function route(req, res) {
     const id = url.searchParams.get('id');
     const r = await readPluginCode(id);
     if (!r) { sendJson(res, 404, { error: '未找到插件代码' }); return; }
-    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-    res.end(r.code);
+    sendJson(res, 200, { code: r.code, builtin: Boolean(r.builtin), path: r.path });
     return;
   }
 
@@ -1068,6 +1083,17 @@ async function route(req, res) {
     return;
   }
 
+  // 手动改写滚动摘要（后台「看摘要」里编辑后保存）
+  if (p === '/api/context/summary' && method === 'PUT') {
+    const { talker, summary } = await readJsonBody(req);
+    if (!talker) { sendJson(res, 400, { error: '缺少 talker' }); return; }
+    const ctx = new ChatContext(talker);
+    ctx.setSummary(String(summary || ''));
+    log(`已更新上下文摘要: ${talker}`);
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
   if (p === '/api/context/compress' && method === 'POST') {
     const { talker, force = true } = await readJsonBody(req);
     if (!talker) { sendJson(res, 400, { error: '缺少 talker' }); return; }
@@ -1086,7 +1112,8 @@ async function route(req, res) {
 
   // ── 记忆 ──
   if (p === '/api/memory' && method === 'GET') {
-    sendJson(res, 200, { stats: memoryStats(), labels: MEMORY_LABELS });
+    const cfg = await loadConfig();
+    sendJson(res, 200, { stats: memoryStats(cfg), labels: MEMORY_LABELS });
     return;
   }
 
@@ -1094,12 +1121,32 @@ async function route(req, res) {
     const talker = url.searchParams.get('talker');
     if (!talker) { sendJson(res, 400, { error: '缺少 talker' }); return; }
     const cfg = await loadConfig();
+    const merged = { ...cfg, context: { ...cfg.context, ...(cfg.chats?.[talker]?.context || {}) } };
     sendJson(res, 200, {
-      detail: getScopeDetail(talker),
+      detail: getScopeDetail(talker, { cfg }),
       config: memoryConfig(cfg, talker),
       labels: MEMORY_LABELS,
-      usage: contextUsage(talker, cfg),
+      usage: contextUsage(talker, merged),
     });
+    return;
+  }
+
+  if (p === '/api/memory/dedupe' && method === 'POST') {
+    const { talker, dryRun = false } = await readJsonBody(req);
+    if (!talker) { sendJson(res, 400, { error: '缺少 talker' }); return; }
+    const r = dedupeScope(talker, { dryRun });
+    const memberCut = Object.values(r.members || {}).reduce((n, x) => n + x, 0);
+    log(`整理重复记忆${dryRun ? '（预演）' : ''} ${talker}：会话 -${r.chat}，成员 -${memberCut}`);
+    sendJson(res, 200, { ok: true, ...r, memberCut });
+    return;
+  }
+
+  if (p === '/api/memory/clear' && method === 'POST') {
+    const { talker } = await readJsonBody(req);
+    if (!talker) { sendJson(res, 400, { error: '缺少 talker' }); return; }
+    const n = clearScope(talker);
+    log(`清空记忆 ${talker}：${n} 条已归档`);
+    sendJson(res, 200, { ok: true, archived: n });
     return;
   }
 

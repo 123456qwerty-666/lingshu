@@ -87,7 +87,8 @@ export function contextUsage(talker, config) {
     maxTokens: max,
     compressAtTokens: threshold,
     usagePercent: Number(((tokens / max) * 100).toFixed(2)),
-    willCompress: tokens >= threshold,
+    // 阈值 0 = 该聊天关闭了自动压缩
+    willCompress: threshold > 0 && tokens >= threshold,
     hasSummary: Boolean(ctx.getSummary()),
     summaryTokens: estimateTokens(ctx.getSummary()),
     summaryUpdatedAt: ctx.data?.metadata?.summary?.updatedAt || 0,

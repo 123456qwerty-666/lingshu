@@ -1,7 +1,7 @@
 # HTTP API
 
 默认监听 `http://127.0.0.1:17890`，全部为 JSON。
-（`/api/logs/stream` 是 SSE；`/api/plugins/code` 是 text/plain。）
+（`/api/logs/stream` 是 SSE；其余全部是 `application/json`。）
 
 ## 状态
 
@@ -62,7 +62,7 @@
 | `/api/plugins/scaffold` | POST | 新建插件 `{id, name, description}` |
 | `/api/plugins/delete` | POST | 删除用户插件 `{id}` |
 | `/api/plugins/reload` | POST | 重载全部插件 |
-| `/api/plugins/code?id=` | GET/PUT | 读写插件代码（内置只读） |
+| `/api/plugins/code?id=` | GET/PUT | 读写插件代码。GET 返回 `{code, builtin, path}`；内置插件只读，PUT 会报错 |
 
 ## 上下文
 
@@ -71,6 +71,7 @@
 | `/api/context/usage?talker=` | GET | token 用量、压缩阈值、摘要 |
 | `/api/context/compress` | POST | 压缩 `{talker, force?}` |
 | `/api/context/clear` | POST | 清空 `{talker, keepSummary?}` |
+| `/api/context/summary` | PUT | 直接改写滚动摘要 `{talker, summary}` |
 
 ## 记忆
 
@@ -86,6 +87,8 @@
 | `/api/memory/search` | POST | 检索 `{talker, query, memberKey?, limit?}` |
 | `/api/memory/forget` | POST | 执行/预演遗忘 `{talker?, dryRun?}` |
 | `/api/memory/compact` | POST | 压缩记忆 `{talker}` |
+| `/api/memory/dedupe` | POST | 合并重复记忆 `{talker, dryRun?}`（同义改写会被并成一条） |
+| `/api/memory/clear` | POST | 清空某会话全部记忆 `{talker}`（进归档，可捞回） |
 | `/api/memory/profile` | POST | 重建画像 `{talker, memberKey}` |
 | `/api/memory/sweep` | POST | 全库巡检（遗忘 + 压缩） |
 
