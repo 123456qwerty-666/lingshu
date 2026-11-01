@@ -17,13 +17,13 @@
     "微信机器人"
   ],
   "license": "MIT",
-  "homepage": "https://github.com/<your-name>/lingshu-hub#readme",
+  "homepage": "https://github.com/123456qwerty-666/lingshu-hub#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/<your-name>/lingshu-hub.git"
+    "url": "git+https://github.com/123456qwerty-666/lingshu-hub.git"
   },
   "bugs": {
-    "url": "https://github.com/<your-name>/lingshu-hub/issues"
+    "url": "https://github.com/123456qwerty-666/lingshu-hub/issues"
   },
   "engines": {
     "node": ">=20.0.0"
