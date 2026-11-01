@@ -3,6 +3,21 @@
 > 给 AI 代理看的说明书。人类看 [README.md](README.md)。
 > 目标：让你（AI）能独立完成「装起来 → 配模型 → 跑通 → 加功能」全流程，不需要人类点网页。
 
+## 先看这份就够了
+
+| 你要做的事 | 看这里 |
+|---|---|
+| **从零部署一台陌生电脑** | [docs/AGENT-GUIDE.md](docs/AGENT-GUIDE.md) ← 完整执行手册，按阶段走 |
+| 快速上手（本文件） | 下面的 1~7 节 |
+| 报错 / 日志看不懂 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) 按现象查 |
+| 写插件 / 装插件 | [docs/PLUGINS.md](docs/PLUGINS.md) |
+| 接微信（白名单、发文件、坑） | [docs/WECHAT.md](docs/WECHAT.md) |
+| 记忆系统原理与调参 | [docs/MEMORY.md](docs/MEMORY.md) |
+| HTTP 接口全量 | [docs/API.md](docs/API.md) |
+
+**一句话上下文**：这是一个零依赖的 Node.js 微信 AI 助手，核心是「会遗忘的记忆」。
+所有功能都能用 HTTP API 驱动，端口 17890，数据在 `data/`。
+
 ---
 
 ## 0. 项目是什么
@@ -170,6 +185,18 @@ plugins/<id>/plugin.json  +  index.mjs
 ```bash
 for f in server/*.mjs plugins/*/*.mjs; do node --check "$f" || echo "FAIL $f"; done
 ```
+
+| 文档 | 内容 |
+|---|---|
+| [docs/AGENT-GUIDE.md](docs/AGENT-GUIDE.md) | **AI 完整执行手册**（环境→部署→模型→微信→插件→交付） |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | 错误大全：现象→根因→命令→修复 |
+| [docs/PLUGINS.md](docs/PLUGINS.md) | 插件安装 / 开发 / 调试 / 分享 |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 架构、消息流水线、设计取舍 |
+| [docs/MEMORY.md](docs/MEMORY.md) | 记忆系统完整设计（公式、参数、调参） |
+| [docs/API.md](docs/API.md) | HTTP API 全量清单 |
+| [docs/WECHAT.md](docs/WECHAT.md) | 微信接入契约与排障 |
+| [docs/DEPLOY-AI.md](docs/DEPLOY-AI.md) | 可直接复制的部署提示词 |
+| [docs/PROMO-DOUYIN.md](docs/PROMO-DOUYIN.md) | 推广文案（人类用，AI 可忽略） |
 
 ## 7. 验收清单
 

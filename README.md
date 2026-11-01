@@ -645,13 +645,16 @@ lingshu/
 
 | 文档 | 内容 |
 |---|---|
+| [docs/AGENT-GUIDE.md](docs/AGENT-GUIDE.md) | **AI Agent 完整执行手册**：环境检测 → 部署 → 接模型 → 接微信 → 插件 → 交付，逐条命令 |
+| [docs/DEPLOY-AI.md](docs/DEPLOY-AI.md) | 可以直接复制给 AI 的部署提示词 |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | 错误大全：现象 → 根因 → 验证命令 → 修复 |
+| [docs/PLUGINS.md](docs/PLUGINS.md) | 插件安装（4 种方式）/ 开发接口 / 3 个实战 / 调试 / 分享 |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 架构、消息流水线、设计取舍 |
 | [docs/MEMORY.md](docs/MEMORY.md) | 记忆系统完整设计（公式、参数、调参） |
-| [docs/PLUGINS.md](docs/PLUGINS.md) | 插件开发指南 |
 | [docs/API.md](docs/API.md) | HTTP API 全量清单 |
 | [docs/WECHAT.md](docs/WECHAT.md) | 微信接入契约与排障 |
-| [docs/DEPLOY-AI.md](docs/DEPLOY-AI.md) | 交给 AI 部署的完整手册 |
-| [AGENTS.md](AGENTS.md) | 供 AI 代理直接读取的执行说明 |
+| [AGENTS.md](AGENTS.md) | 供 AI 代理直接读取的速查 + 导航 |
+| [docs/PROMO-DOUYIN.md](docs/PROMO-DOUYIN.md) | 中文社区推广文案（视频脚本 / 标题 / 简介） |
 
 ---
 
