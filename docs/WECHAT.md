@@ -73,14 +73,38 @@ curl --noproxy '*' http://127.0.0.1:17890/api/health
 提特征码、在新版里扫），是二进制层面的活，AI Agent 读文本是读不出来的。
 （它可以帮你写特征码扫描脚本、搭编译环境、改完帮你跑 MSBuild，但「偏移是多少」这一步得靠逆向结果。）
 
-### 三条现实路径（从易到难）
+### 兜底方案：装配套版本的微信（推荐，别硬改）
 
-1. **等上游适配 / 用安装包自带的匹配微信** —— 成本最低，推荐。
+如果你试了一圈还是适配不了，**直接装这个版本**，比改代码省事一百倍：
+
+```
+https://github.com/123456qwerty-666/lingshu/releases/download/wechat-4.1.10.27/WeChatWin_4.1.10.27.exe
+```
+
+| 项目 | 值 |
+|---|---|
+| 文件 | `WeChatWin_4.1.10.27.exe` |
+| 大小 | 239,441,904 字节（228.3 MB） |
+| SHA256 | `54203FC2B41983FA106B0AF0D67F86BEFC56CCD3DC1005D4BAB6DE8EA36B4F74` |
+
+（腾讯官方公开安装包，仅为配套方便而镜像，版权归腾讯所有。）
+
+**装完必须关掉自动更新** —— 这是头号翻车原因：不是装的时候坏了，
+是过几天微信自己后台升级了，链路毫无预兆失效。
+
+- 微信左下角「三」→ 设置 → 通用 → 关掉自动更新相关选项
+- 更稳妥：把微信安装目录设为只读，或掐掉 `Weixin.exe` 的更新通道
+
+### 四条可行路径（从易到难）
+
+1. **装上面的配套微信**，或等上游适配 —— 成本最低，推荐。
    上游仓库：<https://github.com/sourcepro5/WeChatAgent>
 2. **换一个匹配版本的 DLL** —— 如果社区有人放出对应版本的 `version.dll`，
    直接替换 `app/resources/vendor/hook/version.dll`，并把 `wechatagent.json` 的
    `expectedVersion` 改成实际版本。不用改一行代码。
-3. **自己逆向 + 重编译** —— 源码在 `components/WeChat-Hook/`（`dllmain.cpp` + `src/*.cpp` + `x64_Version_dll.vcxproj`）：
+3. **换掉整套读写组件** —— 灵枢只认 HTTP 契约，换一套能读会发的组件就能接上，
+   改上一节那张表里的 5 个地方即可，AI Agent 几分钟能搞定。
+4. **自己逆向 + 重编译** —— 源码在 `components/WeChat-Hook/`（`dllmain.cpp` + `src/*.cpp` + `x64_Version_dll.vcxproj`）：
 
    ```powershell
    MSBuild.exe x64_Version_dll.vcxproj /m /t:Build /p:Configuration=Release /p:Platform=x64
