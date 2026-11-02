@@ -13,7 +13,7 @@ export const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 const SECRETS_DIR = path.join(DATA_DIR, 'secrets');
 
 export const DEFAULT_CONFIG = {
-  app: { name: '灵枢 AI 中枢', version: '0.4.0', port: 17890, bind: '127.0.0.1' },
+  app: { name: '灵枢 AI 中枢', version: '0.4.2', port: 17890, bind: '127.0.0.1' },
   wechat: {
     readerUrl: 'http://127.0.0.1:5031',
     hookUrl: 'http://127.0.0.1:30001',

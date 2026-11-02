@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT_DIR } from './config.mjs';
 import { estimateMessagesTokens, estimateTokens } from './memory.mjs';
+import { nowBlock, messageStamp, formatTime } from './time.mjs';
 
 const CONTEXT_DIR = path.join(ROOT_DIR, 'data', 'contexts');
 fs.mkdirSync(CONTEXT_DIR, { recursive: true });
@@ -249,9 +250,15 @@ export class MessageRouter {
    * 构造发给模型的消息数组
    * summary 是早前对话的滚动摘要（上下文压缩产物）
    */
-  buildMessages(context, msg, { systemPrompt, historyLimit = 20, summary = '' } = {}) {
+  buildMessages(context, msg, { systemPrompt, historyLimit = 20, summary = '', withTime = true } = {}) {
     const messages = [];
-    if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
+    const now = msg?.timestamp || Date.now();
+
+    // 先告诉模型「现在几点」，否则「明天」「上周」这些话它没法换算
+    const timeNote = nowBlock(now);
+    if (systemPrompt) messages.push({ role: 'system', content: `${systemPrompt}\n\n${timeNote}` });
+    else messages.push({ role: 'system', content: timeNote });
+
     if (summary) {
       messages.push({
         role: 'system',
@@ -263,11 +270,15 @@ export class MessageRouter {
       if (m.role === 'system') continue;
       const content = typeof m.content === 'string' ? m.content : String(m.content ?? '');
       if (!content.trim()) continue;
-      messages.push({ role: m.role, content });
+      // 每条历史消息都带上它真实的发送时间
+      const stamp = withTime && m.ts ? messageStamp(m.ts) : '';
+      messages.push({ role: m.role, content: content + stamp });
     }
 
     const parts = [];
-    if (msg.text) parts.push({ type: 'text', text: msg.text });
+    const stampText = withTime ? `\n（发送时间：${formatTime(now)}）` : '';
+    if (msg.text) parts.push({ type: 'text', text: msg.text + stampText });
+    else if (stampText) parts.push({ type: 'text', text: stampText.trim() });
     for (const img of msg.images) parts.push({ type: 'image_ref', imageId: img.id });
 
     messages.push({

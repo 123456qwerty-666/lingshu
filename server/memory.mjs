@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { DATA_DIR, loadConfig } from './config.mjs';
+import { timeLabel, formatTime, formatTimeMinute, relativeTime } from './time.mjs';
 
 const MEM_DIR = path.join(DATA_DIR, 'memory');
 const SCOPE_DIR = path.join(MEM_DIR, 'scopes');
@@ -196,6 +197,8 @@ function makeMemory(fields = {}) {
     label: fields.label || labelFor(importance),
     createdAt: fields.createdAt || ts,
     lastAccessAt: fields.lastAccessAt || ts,
+    // 这件事「发生在什么时候」——尽量取对话发生的时间，而不是写入记忆的时间
+    occurredAt: fields.occurredAt || fields.createdAt || ts,
     accessCount: fields.accessCount || 0,
     pinned: Boolean(fields.pinned),
     source: fields.source || 'auto',          // auto | manual | compressed | profile
@@ -206,7 +209,7 @@ function makeMemory(fields = {}) {
 }
 
 /** 写入记忆（自动去重：文本高度相似则合并，提升重要度） */
-export function addMemories(talker, items, { meta, memberKey = null, memberName = '' } = {}) {
+export function addMemories(talker, items, { meta, memberKey = null, memberName = '', occurredAt = null } = {}) {
   const scope = loadScope(talker, meta);
   const bucket = memberKey
     ? (scope.members[memberKey] = scope.members[memberKey] || { name: memberName || memberKey, memories: [], profile: '', profileAt: 0 }).memories
@@ -255,6 +258,7 @@ export function addMemories(talker, items, { meta, memberKey = null, memberName 
       ...raw,
       importance,
       memberName: memberKey ? (memberName || memberKey) : '',
+      occurredAt: raw.occurredAt || occurredAt || nowTs(),
     });
     bucket.push(mem);
     added.push(mem);
@@ -366,25 +370,26 @@ export function buildMemoryPrompt(talker, { query = '', memberKey = null, member
   const chatItems = picked.filter(p => p._scope === 'chat');
   const memberItems = picked.filter(p => p._scope === 'member');
 
+  const now = nowTs();
   const lines = [];
   if (memberItems.length) {
     lines.push('【你记得关于聊天对象的事】');
     for (const m of memberItems.slice(0, mc.retrieve.maxMember)) {
       const who = m._memberName || m.memberName || '对方';
-      lines.push(`- ${who}：${m.text}${m.tags?.length ? `（${m.tags.join('/')}）` : ''}`);
+      lines.push(`- ${who}：${m.text}${m.tags?.length ? `（${m.tags.join('/')}）` : ''}（${timeLabel(m.occurredAt || m.createdAt, now)}）`);
     }
   }
   if (chatItems.length) {
     lines.push('【这个聊天里你记得的事】');
     for (const m of chatItems.slice(0, mc.retrieve.maxChat)) {
-      lines.push(`- ${m.text}${m.tags?.length ? `（${m.tags.join('/')}）` : ''}`);
+      lines.push(`- ${m.text}${m.tags?.length ? `（${m.tags.join('/')}）` : ''}（${timeLabel(m.occurredAt || m.createdAt, now)}）`);
     }
   }
   if (!lines.length) return { prompt: '', used: [] };
 
   const prompt = [
     ...lines,
-    '以上是你凭记忆想起的旧事。自然地运用它们（别生硬复述），如果和当前话题无关就忽略。',
+    '每条后面括号里是这件事发生的时间。自然地运用它们（别生硬复述时间），如果和当前话题无关就忽略。',
   ].join('\n');
 
   return { prompt, used: picked };
@@ -592,6 +597,10 @@ const TAG_SYSTEM = `你是「记忆整理器」。读一段对话，只提取值
 - 不要记录「用户问了一个问题」这种交互事实
 - 每条不超过 40 字，用陈述句，第三人称（如「喜欢猫，家里养了两只」）
 - 没有值得记的内容就返回空数组
+- **时间要写死**：对方说了「明天」「下周三」「上个月」「明年」这类相对时间，
+  必须结合【当前时间】换算成具体日期写进 text（如「11月5日（周三）要去体检」）。
+  只写「明天」过几天就没法看了。不知道具体日期就写「近期」。
+- 对方明确说了具体日期（如「我生日是 3 月 8 号」），原样保留
 
 只输出 JSON，不要 markdown：
 {"importance":0.0-1.0,"label":"非常重要|重要|一般|不太重要|琐碎","tags":["标签"],"items":[{"kind":"fact|preference|event|profile|relation","text":"...","importance":0.0-1.0,"tags":["..."],"member":"说话人昵称，不知道就空"}]}`;
@@ -602,8 +611,10 @@ const TAG_SYSTEM = `你是「记忆整理器」。读一段对话，只提取值
  */
 export async function observeTurn({
   talker, kind, userName = '', userWxid = '', userText = '', botText = '', history = [], aiClient, cfg,
+  occurredAt = null,
 }) {
   const config = cfg || await loadConfig();
+  const at = occurredAt || nowTs();
   const mc = memoryConfig(config, talker);
   if (!mc.enabled || !mc.autoTag) return { skipped: 'memory_off' };
   if (!userText?.trim() || userText.trim().length < 2) return { skipped: 'empty_input' };
@@ -624,6 +635,7 @@ export async function observeTurn({
       {
         role: 'user',
         content: [
+          `【当前时间】${formatTime(at)}`,
           `会话类型：${kind === 'group' ? '群聊' : '私聊'}`,
           historyBlock ? `最近对话：\n${historyBlock}` : '',
           `本轮新消息（${userName || '用户'}）：${userText.slice(0, 800)}`,
@@ -654,13 +666,14 @@ export async function observeTurn({
   }
 
   if (chatItems.length) {
-    added += addMemories(talker, chatItems, { meta: { kind } }).length;
+    added += addMemories(talker, chatItems, { meta: { kind }, occurredAt: at }).length;
   }
   if (memberItems.length && userWxid) {
     added += addMemories(talker, memberItems, {
       meta: { kind },
       memberKey: userWxid,
       memberName: userName || userWxid,
+      occurredAt: at,
     }).length;
 
     // 画像定期重建
@@ -718,6 +731,9 @@ export function getScopeDetail(talker, { withRetention = true, cfg = null } = {}
   const decay = memoryConfig(cfg || {}, talker).decay;
   const decorate = (m) => ({
     ...m,
+    occurredAt: m.occurredAt || m.createdAt || now,
+    occurredAtText: formatTimeMinute(m.occurredAt || m.createdAt || now),
+    occurredAgo: relativeTime(m.occurredAt || m.createdAt || now, now),
     retention: Number(retention(m, now, decay).toFixed(3)),
     stabilityHours: Math.round(stabilityHours(m, decay)),
     ageHours: Math.round((now - (m.createdAt || now)) / 3600000),
@@ -858,6 +874,10 @@ export function dedupeScope(talker, { dryRun = false } = {}) {
       dup.accessCount = Math.max(dup.accessCount || 0, mem.accessCount || 0) + 1;
       dup.lastAccessAt = Math.max(dup.lastAccessAt || 0, mem.lastAccessAt || 0);
       dup.createdAt = Math.min(dup.createdAt || Date.now(), mem.createdAt || Date.now());
+      dup.occurredAt = Math.min(
+        dup.occurredAt || dup.createdAt || Date.now(),
+        mem.occurredAt || mem.createdAt || Date.now(),
+      );
       dup.tags = [...new Set([...(dup.tags || []), ...(mem.tags || [])])].slice(0, 6);
       dup.mergedFrom = (dup.mergedFrom || 0) + (mem.mergedFrom || 0) + 1;
       if (mem.pinned) dup.pinned = true;

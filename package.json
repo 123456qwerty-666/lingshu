@@ -1,6 +1,6 @@
 {
   "name": "lingshu",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "private": false,
   "type": "module",
   "description": "灵枢 AI 中枢 — 本机运行的微信 AI 助手平台：控制台、插件系统、带遗忘曲线的记忆、联网搜索、AI 绘图。零依赖。",

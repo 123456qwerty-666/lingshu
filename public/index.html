@@ -218,7 +218,7 @@ input.ctl,select.ctl,textarea.ctl{width:100%;padding:8px 11px;background:var(--s
       <div class="brand-mark">枢</div>
       <div class="brand-text">
         <h1>灵枢</h1>
-        <small>AI 中枢 v0.4</small>
+        <small>AI 中枢 v0.4.2</small>
       </div>
     </div>
     <nav class="nav">
@@ -1550,13 +1550,14 @@ function memCard(m, memberKey) {
         <div class="chips" style="margin-top:6px">
           <span class="tag ${labelCls}">${esc(m.label || '')} ${Number(m.importance || 0).toFixed(2)}</span>
           <span class="tag">${esc(m.kind || '')}</span>
+          ${m.occurredAtText ? `<span class="tag tag-cyan">🕒 ${esc(m.occurredAtText)}${m.occurredAgo ? ` · ${esc(m.occurredAgo)}` : ''}</span>` : ''}
           ${(m.tags || []).map(t => `<span class="tag tag-blue">${esc(t)}</span>`).join('')}
           ${m.source === 'compressed' ? '<span class="tag tag-purple">压缩摘要</span>' : ''}
           ${m.source === 'manual' ? '<span class="tag tag-cyan">手动</span>' : ''}
         </div>
         <div style="display:flex;align-items:center;gap:8px;margin-top:7px">
           <div class="bar" style="flex:0 0 150px"><span style="width:${Math.max(2, r * 100)}%;background:${retentionColor(r)}"></span></div>
-          <span class="hint dim">强度 ${(r * 100).toFixed(0)}% · ${m.ageHours}h 前 · 上次回忆 ${m.idleHours}h 前</span>
+          <span class="hint dim">强度 ${(r * 100).toFixed(0)}% · 上次回忆 ${m.idleHours}h 前</span>
         </div>
       </div>
       <div class="mem-actions">
@@ -1614,9 +1615,10 @@ async function loadArchive() {
           <div class="chips" style="margin-top:6px">
             <span class="tag">${esc(m.label || '')} ${Number(m.importance || 0).toFixed(2)}</span>
             <span class="tag">${esc((m._scopeLabel || '').replace('-manual', ''))}</span>
+            ${m.occurredAtText ? `<span class="tag tag-cyan">🕒 ${esc(m.occurredAtText)}</span>` : ''}
             ${(m.tags || []).map(t => `<span class="tag tag-blue">${esc(t)}</span>`).join('')}
           </div>
-          <div class="hint dim" style="margin-top:6px">遗忘时强度 ${((m._retention ?? 0) * 100).toFixed(0)}% · ${fmtTime(m._forgottenAt)}</div>
+          <div class="hint dim" style="margin-top:6px">${m.occurredAtText ? `发生于 ${esc(m.occurredAtText)} · ` : ''}遗忘时强度 ${((m._retention ?? 0) * 100).toFixed(0)}% · ${fmtTime(m._forgottenAt)}</div>
         </div>
         <div class="mem-actions"><button class="btn btn-sm" onclick="memRestore('${m.id}')">捞回来</button></div>
       </div>

@@ -359,6 +359,8 @@ async function afterTurnMemory(msg, config, context, replyText) {
     history: context.getMessages(6),
     aiClient: ai,
     cfg: config,
+    // 用这条消息真实的发生时间，而不是"写入记忆的时间"
+    occurredAt: msg.timestamp || Date.now(),
   });
 
   if (res.skipped) {
