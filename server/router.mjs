@@ -270,8 +270,10 @@ export class MessageRouter {
       if (m.role === 'system') continue;
       const content = typeof m.content === 'string' ? m.content : String(m.content ?? '');
       if (!content.trim()) continue;
-      // 每条历史消息都带上它真实的发送时间
-      const stamp = withTime && m.ts ? messageStamp(m.ts) : '';
+      // 只给「对方说的」加时间。
+      // 注意：绝对不要给 assistant 的历史回复加 —— 模型看到自己以前的输出都带时间，
+      // 就会学着在结尾也附一个时间（实测确实会）。
+      const stamp = withTime && m.ts && m.role === 'user' ? messageStamp(m.ts) : '';
       messages.push({ role: m.role, content: content + stamp });
     }
 

@@ -26,6 +26,7 @@ import {
   MEMORY_LABELS,
 } from './memory.mjs';
 import { compressContext, contextUsage } from './compressor.mjs';
+import { stripTimeEcho } from './time.mjs';
 import { listPersonasBrief, getPersona } from './personas.mjs';
 import {
   initPlugins, getToolList, scaffoldPlugin, deletePlugin, reloadPlugins,
@@ -321,6 +322,13 @@ async function processMessage(msg, config) {
 
   context.addMessage('user', msg.text, { images: msg.images.map(i => i.id), contentType: msg.contentType, ts: msg.timestamp });
   if (replyText.trim()) context.addMessage('assistant', replyText);
+
+  // 兜底：模型偶尔会把我们注入的时间尾注抄进回复里，发出去很难看
+  if (replyText.trim()) {
+    const cleaned = stripTimeEcho(replyText);
+    if (cleaned !== replyText.trim()) log('已清理回复中多余的时间尾注', 'debug');
+    replyText = cleaned;
+  }
 
   const parts = replyText.trim() ? router.splitReply(replyText, config) : [];
   if (parts.length) {
