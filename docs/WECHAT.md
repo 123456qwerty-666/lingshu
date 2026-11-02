@@ -39,6 +39,56 @@
 curl --noproxy '*' http://127.0.0.1:17890/api/health
 ```
 
+## 零之二、想适配别的微信版本：AI Agent 能改到哪一步
+
+很多人的第一反应是「让 AI Agent 改一下不就行了」。这里把边界说清楚，省得走弯路。
+
+### 能改的部分（纯文本，AI Agent 完全搞得定）
+
+**灵枢自己**全是 Node.js 源码，不碰微信进程，对接层本来就是配置化的：
+
+| 要改什么 | 改哪里 |
+|---|---|
+| 读取器 / 发送端地址与端口 | `config.wechat.readerUrl` / `hookUrl`，或控制台「微信设置」 |
+| token | `wechat.readerToken` / `hookToken`，留空会自动从常见位置读 |
+| 推送 payload 字段不一样 | `server/router.mjs` 的 `parseEvent()`（已有 sessionId / talker / sender_wxid 多套兼容） |
+| 换一套全新的读取器/发送端 | 改 `server/wechat.mjs` 的调用契约即可，上面所有功能不受影响 |
+| 图片/文件发送暂存区路径 | `server/wechat.mjs` 的 `stagingDir()` / `findHookModuleDir()` |
+
+换句话说：**只要你那套读写组件能跑起来，让灵枢接上去是 AI Agent 几分钟的事。**
+
+### 改不动的部分（不是"改代码"能解决的）
+
+版本锁在 Hook DLL 里，而 DLL 依赖的是**微信进程内的内存偏移**。
+这些偏移在源码里是硬编码的，比如 `src/inline_weixin_dll_load.cpp`：
+
+```cpp
+{ (DWORD_PTR)g_hWeixinDll + 0xDE4C33, { 0x43, 0x19, 0x6C, 0xF2 } },
+```
+
+`xdb/xwechat_offsets.h` 目前只有一行 `#pragma once` —— 没有可维护的多版本偏移表。
+微信一升级，`0xDE4C33` 这类地址就全变了。
+
+所以真正的门槛不是"改代码"，是**拿到新版本的偏移**。这需要逆向（x64dbg / IDA 定位函数、
+提特征码、在新版里扫），是二进制层面的活，AI Agent 读文本是读不出来的。
+（它可以帮你写特征码扫描脚本、搭编译环境、改完帮你跑 MSBuild，但「偏移是多少」这一步得靠逆向结果。）
+
+### 三条现实路径（从易到难）
+
+1. **等上游适配 / 用安装包自带的匹配微信** —— 成本最低，推荐。
+   上游仓库：<https://github.com/sourcepro5/WeChatAgent>
+2. **换一个匹配版本的 DLL** —— 如果社区有人放出对应版本的 `version.dll`，
+   直接替换 `app/resources/vendor/hook/version.dll`，并把 `wechatagent.json` 的
+   `expectedVersion` 改成实际版本。不用改一行代码。
+3. **自己逆向 + 重编译** —— 源码在 `components/WeChat-Hook/`（`dllmain.cpp` + `src/*.cpp` + `x64_Version_dll.vcxproj`）：
+
+   ```powershell
+   MSBuild.exe x64_Version_dll.vcxproj /m /t:Build /p:Configuration=Release /p:Platform=x64
+   # 输出：x64\Release\version.dll
+   ```
+
+   前提是新版微信的偏移已经逆向出来了。
+
 ---
 
 ## 一、配置
