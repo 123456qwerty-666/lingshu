@@ -9,6 +9,33 @@
 
 ## 0. 你的任务与成功标准
 
+### 0.1 先记住：这是**两个软件**，不是一个
+
+这是最容易搞错的地方。**灵枢只装一半，微信永远接不上。**
+
+```
+┌─ 灵枢 LingShu（本仓库，你负责装）──────────────┐
+│  记忆 · 人格 · 模型 · 插件 · 控制台            │
+│  它不知道微信长什么样，只会「说话」和「记事」    │
+└──────────────────┬─────────────────────────────┘
+                   │ 本机 HTTP 127.0.0.1:5031 / 30001
+┌──────────────────┴─ WeChatAgent（第三方，也要装）┐
+│  读消息 · 发消息 · 登录微信                     │
+└────────────────────────────────────────────────┘
+```
+
+| 只装灵枢，能得到什么 | 得不到什么 |
+|---|---|
+| 控制台能开、模型/人格/插件能配 | ❌ 收不到微信消息 |
+| 记忆库能手动增删改查 | ❌ 发不出微信消息 |
+| — | ❌ **没有对话入口**（控制台不是聊天工具） |
+| — | ❌ 自动攒记忆（没聊天就没得提取） |
+
+**结论：接到微信 = 必须装 WeChatAgent + 登录微信 + 加白名单 + 回灵枢填地址。**
+完整步骤在 [阶段五 6.0](#60-先装底层读写组件关键别跳)。别跳过那一节。
+
+### 0.2 你的任务
+
 **目标**：让这台电脑上跑起灵枢，用户打开 <http://127.0.0.1:17890> 就能用。
 
 **成功标准（全部满足才算完成）**：
@@ -21,6 +48,10 @@
 | 4 | 链路通 | `POST /api/debug/send` + 看日志 | 出现「已回复」 |
 | 5 | 无报错 | `GET /api/logs?limit=30` | 没有 `"level":"error"` |
 | 6 | 无泄漏 | `git status` | 没有 `data/` |
+| 7 | **微信通**（仅在用户要求接微信时） | `GET /api/health` | `connected/sseConnected/hookConnected` 全为 `true` |
+
+**如果用户只要「能用 AI」，不要求接微信**：做完 1-6 项即可交付，
+并明确告诉用户「微信没接，因为还差底层组件；要接看 docs/AGENT-GUIDE.md 6.0」。
 
 **不要做的事**：不要 `npm install`（零依赖）；不要改 `app.bind`；不要把 Key 写进仓库。
 
@@ -356,6 +387,166 @@ curl -s "$BASE/api/logs?limit=20"
 
 ## 6. 阶段五：接入微信
 
+### 6.0 先装底层读写组件（关键，别跳）
+
+**触发条件**：用户说「接微信」「自动回消息」「收微信消息」。
+如果用户只要 AI 能用、不接微信，跳过本节，按 0.2 的 1-6 项交付即可。
+
+**这一节是整份手册里最容易漏的一步。** 灵枢自己不读微信、不发微信，
+它只调用两个本机 HTTP 服务。这两个服务来自第三方软件 **WeChatAgent**（不在本仓库），
+必须由你在用户机器上装好。
+
+#### 6.0.1 硬性要求（不满足就别往下走，直接告诉用户）
+
+| 要求 | 说明 |
+|---|---|
+| 系统 | **Windows 10/11 x64**。macOS / Linux 目前没有可用方案 |
+| 微信版本 | **4.1.10.27**（Windows x64），必须是这个版本 |
+| 磁盘 | 至少 6 GB 空闲 |
+| 权限 | 需要能安装软件、能结束微信进程 |
+
+#### 6.0.2 第 1 步：确认用户本机微信版本
+
+```powershell
+# Windows PowerShell
+(Get-Item "C:\Program Files\Tencent\Weixin\Weixin.exe").VersionInfo.FileVersion
+# 也可能是 D:\wx41027\Weixin.exe 之类，先找：
+Get-Process Weixin | Select-Object Path
+```
+
+| 结果 | 下一步 |
+|---|---|
+| `4.1.10.27` | ✅ 直接进入 6.0.3 |
+| 其它版本 | ⚠️ 必须换成 4.1.10.27，见 6.0.2b |
+| 找不到微信 | 先让用户装微信，或直接用 6.0.2b 的安装包 |
+
+#### 6.0.2b 换微信版本（版本不符时）
+
+**不要试图改代码去适配别的微信版本** —— 注入组件依赖微信内部内存偏移，
+换版本会让偏移全失效，这不是改文本能解决的。
+
+直接让用户装配套版本：
+
+```
+https://github.com/123456qwerty-666/lingshu/releases/download/wechat-4.1.10.27/WeChatWin_4.1.10.27.exe
+```
+
+| 项目 | 值 |
+|---|---|
+| 大小 | 239,441,904 字节（228.3 MB） |
+| SHA256 | `54203FC2B41983FA106B0AF0D67F86BEFC56CCD3DC1005D4BAB6DE8EA36B4F74` |
+
+装的时候选一个**独立目录**（例如 `D:\wx41027`），不要覆盖用户现有微信，
+装完在 WeChatAgent 里把 `wechatExecutable` 指向这个新路径。
+
+#### 6.0.3 第 2 步：装 WeChatAgent
+
+下载地址：<https://github.com/sourcepro5/WeChatAgent/releases>
+选 `WeChatAgent-Setup-0.4.1+-x64.exe`（约 500 MB）。
+
+安装步骤：
+
+1. **完全退出微信**（托盘图标也要退），否则 DLL 注入会失败
+2. 运行安装器，选一个根目录。它会生成 `app\`（程序）和 `data\`（数据）
+3. 首次启动按向导走：登录微信 → 验证数据库 → 选择/安装 DSH → 启用本机插件
+4. 初始白名单为空 —— 这是正常的，稍后 6.0.6 再加
+
+> 安装包本身带一份匹配版微信，也可以用它自带的，省得自己找版本。
+
+#### 6.0.4 第 3 步：关键 —— 目录要摆成「兄弟结构」
+
+灵枢的自动白名单同步（`server/agent-bridge.mjs`）**只认这两个位置**：
+
+```
+<灵枢的上级目录>/
+├── lingshu/                     ← 本仓库
+└── WeChatAgent-install/         ← 或 WeChatAgent/
+    └── data/workspace/config/wechatagent.json
+```
+
+如果 WeChatAgent 装在别处（比如 `C:\WeChatAgent`），自动同步会失败，
+日志里会出现「找不到 WeChatAgent 配置文件（wechatagent.json）」，
+这时只能手动改 6.0.6 的那个 JSON。
+
+#### 6.0.5 第 4 步：验证两个服务活着
+
+```bash
+# Reader（读消息）
+curl -s -H "Authorization: Bearer <readerToken>" http://127.0.0.1:5031/api/v1/reader/status
+# 期望：{"success":true,"ownWxid":"wxid_xxx","accountDirectory":"wxid_xxx_1234",...}
+
+# Hook（发消息）
+curl -s -H "Authorization: Bearer <hookToken>" \
+  -H "X-WeChatAgent-Account: <accountDirectory>" \
+  http://127.0.0.1:30001/WeChatAgent/health
+# 期望：{"nativeFileSend":true,"nativeStickerSend":true,"version":"4.1.10.27",...}
+```
+
+token 从哪来（灵枢也会自动读这两处，通常不用手填）：
+
+| token | 位置 |
+|---|---|
+| reader | `<workspace>/state/wechat-io-config.json` 里的 `reader_token` |
+| hook | `<workspace>/state/hook/native-token.txt`（64 位十六进制） |
+
+#### 6.0.6 第 5 步：把会话加进 WeChatAgent 白名单
+
+**这一步不做，灵枢永远收不到消息** —— 读取器只推送它自己授权过的会话。
+
+正常情况下灵枢会自动写：调 `POST /api/chats/add` 时会同步到
+`<workspace>/config/wechatagent.json`（先备份、再原子写）。
+
+失效时手动改这个文件：
+
+```json
+{
+  "wechat": {
+    "whitelist": {
+      "groups": ["460821394"],
+      "private": ["1641108881"]
+    }
+  }
+}
+```
+
+- 里面填的是 **conversationId（纯数字）**，不是 `xxx@chatroom` 也不是 wxid
+- 改完不用重启，读取器下次轮询会重读这个文件（几秒内生效）
+- 也可以在 WeChatAgent 自己的界面里加
+
+验证生效：`curl -s http://127.0.0.1:17890/api/health` 里 `reader.pushed` 开始增长，
+或灵枢日志出现 `收到 [sse] <名字>: ...`。
+
+怎么拿到 conversationId：灵枢 `POST /api/chats/search` 返回的 `conversationId` 字段。
+
+#### 6.0.7 第 6 步：提醒用户关掉微信自动更新
+
+**这是头号"事后翻车"原因**：装的时候好好的，过几天微信自己后台升级，链路突然全断。
+
+让用户去 微信 → 设置 → 通用，关掉自动更新；更稳妥的是把微信安装目录设为只读。
+
+#### 6.0.8 失败分支（按现象查）
+
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| Hook 端口 30001 连不上 | DLL 没注入成功 | 微信没完全退出就装了 / 微信版本不对 → 完全退出微信重启 |
+| health 里 `version` 不是 4.1.10.27 | 装了别的微信 | 回到 6.0.2b 换配套版本 |
+| `nativeFileSend: false` | 组件版本旧，没有文件能力 | 只能发文本；升级组件 |
+| 灵枢日志没有 `收到 [sse]` | 会话不在白名单 | 回到 6.0.6 |
+| 日志出现 `Conversation is not selected` | 同上，读取器没授权 | 回到 6.0.6 |
+| 「找不到 WeChatAgent 配置文件」 | 不是兄弟目录结构 | 回到 6.0.4，或手动改 JSON |
+| 能收不能发 | Hook 起来了但 token/account 不对 | 核对 `X-WeChatAgent-Account` 与 `accountDirectory` |
+
+#### 6.0.9 装完自检
+
+```bash
+curl -s -X POST http://127.0.0.1:17890/api/wechat/reconnect
+curl -s http://127.0.0.1:17890/api/health
+# 期望三个都为 true：
+# "connected":true  "sseConnected":true  "hookConnected":true
+```
+
+三个都 `true` 才算微信接好了。任何一个 `false`，回到 6.0.8 对表。
+
 ### 6.1 先搞清楚拓扑
 
 ```
@@ -365,8 +556,8 @@ curl -s "$BASE/api/logs?limit=20"
                灵枢 server (17890)
 ```
 
-**这两个组件是第三方的，不在本仓库里。** 用户必须自己装好。
-你要做的是：确认它们活着 → 把地址和账号填进灵枢 → 验证。
+**这两个组件是第三方的，不在本仓库里。** 安装步骤见上一节 6.0。
+这一节只做「确认它们活着 → 把地址和账号填进灵枢 → 验证」。
 
 ### 6.2 前置检查（先确认外部服务可用）
 

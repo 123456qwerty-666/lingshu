@@ -33,8 +33,34 @@
 10. POST /api/debug/send {"talker":"demo","text":"用一句话介绍你自己"}
 11. GET /api/logs?limit=20 确认出现「收到」→「已回复」，且没有「AI 调用失败」
 
+【如果要接微信 —— 注意：光装灵枢接不上，这是两个软件】
+灵枢只负责记忆/人格/模型/插件，读写微信是另一个第三方软件 WeChatAgent 的活。
+没有它：收不到消息、发不出消息、也没有对话入口。必须按下面走完：
+12. 先确认微信版本必须是 Windows x64 的 4.1.10.27：
+    PowerShell: (Get-Item "微信安装目录\Weixin.exe").VersionInfo.FileVersion
+    - 不是 4.1.10.27 → 让用户装配套版本，不要试图改代码适配：
+      https://github.com/123456qwerty-666/lingshu/releases/download/wechat-4.1.10.27/WeChatWin_4.1.10.27.exe
+13. 下载并安装 WeChatAgent：
+    https://github.com/sourcepro5/WeChatAgent/releases → WeChatAgent-Setup-0.4.1+-x64.exe
+    - 装之前必须完全退出微信（含托盘图标）
+    - 装在灵枢的「兄弟目录」，目录名叫 WeChatAgent-install 或 WeChatAgent，
+      否则灵枢的自动白名单同步会失败
+14. 验证两个服务活着：
+    curl -s http://127.0.0.1:5031/api/v1/reader/status
+    curl -s http://127.0.0.1:30001/WeChatAgent/health
+    期望 hook 的返回里 "version":"4.1.10.27" 且 "nativeFileSend":true
+15. 把要接的会话加进 WeChatAgent 白名单
+    （写 conversationId，纯数字，不是 @chatroom 或 wxid）。
+    正常情况灵枢 POST /api/chats/add 会自动写；失败就手动改
+    <workspace>/config/wechatagent.json 的 wechat.whitelist
+16. POST /api/wechat/reconnect，再 GET /api/health
+    要求 connected / sseConnected / hookConnected 三个都为 true
+17. 提醒用户：装完一定要关掉微信自动更新，
+    否则过几天微信后台自升级，整套链路会毫无预兆失效
+
 【交付】
-告诉我：控制台地址、当前默认模型、健康检查结果、还缺什么（比如要接微信需要外部组件）
+告诉我：控制台地址、当前默认模型、健康检查结果、
+以及微信三盏灯（微信/推送/发送）各自的状态；没接微信就说明还差 WeChatAgent。
 
 【硬性约束】
 - 不要把 API Key 写进任何会被 git 提交的文件
