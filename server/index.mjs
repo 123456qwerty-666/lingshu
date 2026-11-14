@@ -180,7 +180,7 @@ function mergeContextText(messages, talker) {
   });
 }
 
-async function handleIncoming(event, { source = 'sse' } = {}) {
+async function handleIncoming(event, { source = 'sse', force = false } = {}) {
   const config = await loadConfig();
   const msg = router.parseEvent(event, { ownWxid: config.wechat.ownWxid || getState().ownWxid });
 
@@ -200,11 +200,15 @@ async function handleIncoming(event, { source = 'sse' } = {}) {
     }
   }
 
-  const trigger = router.shouldTrigger(msg, config);
-  if (trigger.reason) {
-    bumpSkipped(trigger.reason);
-    log(`跳过 [${trigger.reason}] ${msg.kind}/${msg.talker}: ${msg.text.slice(0, 40)}`, 'debug');
-    return { skipped: trigger.reason };
+  // 控制台「→ AI」是手动投递，直接放行：群里 smart 模式要 @ 或唤醒词，
+  // 但人造消息不该被这条规则挡掉，否则群聊里永远测不了。
+  if (!force) {
+    const trigger = router.shouldTrigger(msg, config);
+    if (trigger.reason) {
+      bumpSkipped(trigger.reason);
+      log(`跳过 [${trigger.reason}] ${msg.kind}/${msg.talker}: ${msg.text.slice(0, 40)}`, 'debug');
+      return { skipped: trigger.reason };
+    }
   }
 
   const rl = router.checkRateLimit(msg.talker, config);
@@ -931,6 +935,31 @@ async function route(req, res) {
     return;
   }
 
+  // 群成员候选：优先用记忆里认识的人，其次用最近聊天记录里的发言人
+  if (p === '/api/chats/members' && method === 'GET') {
+    const talker = url.searchParams.get('talker');
+    if (!talker) { sendJson(res, 400, { error: '缺少 talker' }); return; }
+    const found = new Map();
+    try {
+      const d = getScopeDetail(talker);
+      for (const [wxid, m] of Object.entries(d.members || {})) {
+        if (wxid && !String(wxid).includes('@chatroom')) found.set(wxid, m.name || wxid);
+      }
+    } catch { /* ignore */ }
+    try {
+      const msgs = await getChatHistory(talker, 80);
+      for (const m of msgs) {
+        if (m.isSend) continue;
+        const wxid = m.senderUsername;
+        if (wxid && wxid !== talker && !String(wxid).includes('@chatroom') && !found.has(wxid)) {
+          found.set(wxid, m.senderDisplay || wxid);
+        }
+      }
+    } catch { /* ignore */ }
+    sendJson(res, 200, { members: [...found].map(([wxid, name]) => ({ wxid, name })) });
+    return;
+  }
+
   if (p === '/api/chat/history' && method === 'GET') {
     const talker = url.searchParams.get('talker');
     const limit = Math.min(200, parseInt(url.searchParams.get('limit') || '40', 10));
@@ -1584,20 +1613,23 @@ async function route(req, res) {
     if (!talker) { sendJson(res, 400, { error: '缺少 talker' }); return; }
     const convId = String(b.conversationId || '');
     const kind = b.kind || (String(talker).includes('@chatroom') ? 'group' : 'private');
+    // 群聊里 talkerId 是「说话人」，sessionId 才是群 id。之前一律填成 talker，
+    // 导致群里模拟进来的消息发言人被当成群本身。
+    const senderWxid = String(b.senderWxid || '') || (kind === 'group' ? `fake_${Date.now()}` : talker);
     const fake = {
       event: 'message.new',
       sessionId: talker,
       sessionType: kind,
       conversationId: convId,
-      senderName: b.senderName || talker,
-      talkerId: talker,
+      senderName: b.senderName || (kind === 'group' ? '群成员' : talker),
+      talkerId: senderWxid,
       content: b.text || '',
       type: 1,
       timestamp: Math.floor(Date.now() / 1000),
       rawid: `debug-${Date.now()}`,
     };
     try {
-      const r = await handleIncoming(fake, { source: 'debug' });
+      const r = await handleIncoming(fake, { source: 'debug', force: b.force === true });
       sendJson(res, 200, { ok: true, result: r });
     } catch (e) { sendJson(res, 500, { error: e.message }); }
     return;

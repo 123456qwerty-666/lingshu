@@ -227,7 +227,7 @@ input.ctl,select.ctl,textarea.ctl{width:100%;padding:8px 11px;background:var(--s
       <div class="brand-mark">枢</div>
       <div class="brand-text">
         <h1>灵枢</h1>
-        <small>AI 中枢 v0.5.5</small>
+        <small>AI 中枢 v0.5.6</small>
       </div>
     </div>
     <nav class="nav">
@@ -1185,23 +1185,41 @@ async function sendAsPeer() {
   const text = input.value.trim();
   if (!text || !S.current) { toast('先选一个聊天', 'error'); return; }
   const c = (S.chats || []).find(x => x.talker === S.current) || {};
+  const kind = c.kind || (String(S.current).includes('@chatroom') ? 'group' : 'private');
   const btn = input.nextElementSibling;
   input.disabled = true;
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
   try {
+    let senderWxid = '';
+    let senderName = c.name || S.current;
+    // 群聊：随机挑一个真实群成员当发言人，让 AI 知道「是谁在说话」
+    if (kind === 'group') {
+      const d = await apiSafe(`/chats/members?talker=${encodeURIComponent(S.current)}`);
+      const list = (d?.members || []).filter(m => m.wxid && m.wxid !== S.current);
+      if (list.length) {
+        const pick = list[Math.floor(Math.random() * list.length)];
+        senderWxid = pick.wxid;
+        senderName = pick.name || pick.wxid;
+      } else {
+        senderName = '群成员';
+      }
+    }
     const r = await api('/debug/send', {
       method: 'POST',
       body: JSON.stringify({
         talker: S.current,
-        kind: c.kind || (String(S.current).includes('@chatroom') ? 'group' : 'private'),
+        kind,
         conversationId: c.conversationId || '',
-        senderName: c.name || S.current,
+        senderName,
+        senderWxid,
+        force: true,          // 手动投递，跳过 @ / 唤醒词 的判断
         text,
       }),
     });
     input.value = '';
     const ok = r?.result?.ok;
-    toast(ok ? 'AI 已接收并回复' : `AI 未回复${r?.result?.reason ? '（' + r.result.reason + '）' : ''}`, ok ? 'success' : 'error');
+    const who = kind === 'group' ? `（以「${senderName}」身份）` : '';
+    toast(ok ? `AI 已接收并回复${who}` : `AI 未回复${who}${r?.result?.reason ? '：' + r.result.reason : ''}`, ok ? 'success' : 'error');
     setTimeout(reloadHistory, 900);
   } catch (e) {
     toast('发送失败: ' + e.message, 'error');
