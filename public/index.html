@@ -152,8 +152,12 @@ input.ctl,select.ctl,textarea.ctl{width:100%;padding:8px 11px;background:var(--s
 .msg-voice audio{height:34px;flex:1;min-width:170px}
 .msg-ph{opacity:.8;font-size:12.5px}
 .input-area{padding:10px;border-top:1px solid var(--border);display:flex;gap:8px;flex-shrink:0;background:var(--surface)}
-.input-area input{flex:1;padding:9px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:13px}
+.input-area input{flex:1;min-width:0;padding:9px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:13px}
 .input-area input:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring)}
+.input-area.dual{flex-wrap:wrap;align-items:center}
+.io-cell{display:flex;align-items:center;gap:6px;flex:1 1 220px;min-width:0}
+.io-tag{flex:0 0 auto;font-size:11px;padding:2px 6px;border-radius:6px;background:var(--surface3);color:var(--text2);white-space:nowrap;cursor:help}
+.io-tag.ai{background:color-mix(in srgb,var(--accent) 22%,transparent);color:var(--accent2)}
 
 .empty{text-align:center;padding:34px 18px;color:var(--text3);font-size:13px;line-height:1.8}
 .empty .big{font-size:26px;display:block;margin-bottom:6px;opacity:.5}
@@ -223,7 +227,7 @@ input.ctl,select.ctl,textarea.ctl{width:100%;padding:8px 11px;background:var(--s
       <div class="brand-mark">枢</div>
       <div class="brand-text">
         <h1>灵枢</h1>
-        <small>AI 中枢 v0.5.2</small>
+        <small>AI 中枢 v0.5.3</small>
       </div>
     </div>
     <nav class="nav">
@@ -305,10 +309,18 @@ input.ctl,select.ctl,textarea.ctl{width:100%;padding:8px 11px;background:var(--s
             <div class="messages" id="messages">
               <div class="empty"><span class="big">💬</span>左侧选择或搜索添加一个聊天</div>
             </div>
-            <div class="input-area">
-              <input id="manual-input" placeholder="手动发一条微信消息…" onkeydown="if(event.key==='Enter')sendManual()">
-              <button class="btn" onclick="sendManual()">发送</button>
-              <button class="btn btn-ghost" onclick="reloadHistory()">刷新</button>
+            <div class="input-area dual">
+              <div class="io-cell">
+                <span class="io-tag" title="直接给对方发微信消息，AI 不参与">→ 对方</span>
+                <input id="manual-input" placeholder="发给微信里的对方…" onkeydown="if(event.key==='Enter')sendManual()">
+                <button class="btn btn-sm" onclick="sendManual()">发送</button>
+              </div>
+              <div class="io-cell">
+                <span class="io-tag ai" title="模拟对方发一条消息给 AI，AI 会正常接收并回复">→ AI</span>
+                <input id="peer-input" placeholder="模拟对方发给 AI…" onkeydown="if(event.key==='Enter')sendAsPeer()">
+                <button class="btn btn-sm btn-primary" onclick="sendAsPeer()">发送</button>
+              </div>
+              <button class="btn btn-ghost btn-sm" onclick="reloadHistory()" title="刷新历史">刷新</button>
             </div>
           </div>
           <div class="col col-right" id="chat-settings">
@@ -1168,6 +1180,37 @@ async function sendManual() {
     setTimeout(reloadHistory, 800);
   } catch (e) { toast('发送失败: ' + e.message, 'error'); }
 }
+async function sendAsPeer() {
+  const input = document.getElementById('peer-input');
+  const text = input.value.trim();
+  if (!text || !S.current) { toast('先选一个聊天', 'error'); return; }
+  const c = (S.chats || []).find(x => x.talker === S.current) || {};
+  const btn = input.nextElementSibling;
+  input.disabled = true;
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  try {
+    const r = await api('/debug/send', {
+      method: 'POST',
+      body: JSON.stringify({
+        talker: S.current,
+        kind: c.kind || (String(S.current).includes('@chatroom') ? 'group' : 'private'),
+        conversationId: c.conversationId || '',
+        senderName: c.name || S.current,
+        text,
+      }),
+    });
+    input.value = '';
+    const ok = r?.result?.ok;
+    toast(ok ? 'AI 已接收并回复' : `AI 未回复${r?.result?.reason ? '（' + r.result.reason + '）' : ''}`, ok ? 'success' : 'error');
+    setTimeout(reloadHistory, 900);
+  } catch (e) {
+    toast('发送失败: ' + e.message, 'error');
+  } finally {
+    input.disabled = false;
+    if (btn) { btn.disabled = false; btn.textContent = '发送'; }
+  }
+}
+
 async function doSearch() {
   const q = document.getElementById('chat-search').value.trim();
   const box = document.getElementById('search-results');
