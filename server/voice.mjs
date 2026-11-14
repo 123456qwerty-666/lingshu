@@ -246,9 +246,16 @@ export async function synthesize(text, { config = null, talker = null, providerI
   const clean = String(text || '').replace(/```[\s\S]*?```/g, '（代码略）').trim();
   if (!clean) throw new Error('没有可合成的文本');
 
+  // ⚠️ DeepSeek 的音色字段叫 voice_id，不是 voice。
+  // 传 voice 不会报错，但会被静默忽略 —— 结果永远是最默认的女声 stella。
+  // 只有 stella / tide 两个值，其它值会直接 400。
+  const voiceForApi = protocol === 'deepseek'
+    ? (['stella', 'tide'].includes(voiceId) ? voiceId : 'stella')
+    : voiceId;
+
   const body = protocol === 'openai'
-    ? { model: model || 'tts-1', input: clean, voice: voiceId, response_format: 'wav' }
-    : { text: clean, voice: voiceId, format: 'wav' };
+    ? { model: model || 'tts-1', input: clean, voice: voiceForApi, response_format: 'wav' }
+    : { text: clean, voice_id: voiceForApi, format: 'wav' };
 
   const url = endpoint(provider.baseUrl, preset.ttsPath);
   onLog?.(`语音合成请求：${provider.id}/${model || '默认'} 音色=${voiceId} 字数=${clean.length}`);
@@ -272,14 +279,14 @@ export async function synthesize(text, { config = null, talker = null, providerI
     const b64 = d.audio ?? d.data ?? d.b64_json;
     if (typeof b64 === 'string' && b64.length > 64) {
       const buf = Buffer.from(b64, 'base64');
-      return { buffer: buf, format: 'wav', ext: 'wav', voice: voiceId, provider: provider.id, model };
+      return { buffer: buf, format: 'wav', ext: 'wav', voice: voiceForApi, provider: provider.id, model };
     }
     throw new Error(`语音合成没有返回音频：${t.slice(0, 160)}`);
   }
 
   const buf = Buffer.from(await resp.arrayBuffer());
   if (!buf.length) throw new Error('语音合成返回空音频');
-  return { buffer: buf, format: 'wav', ext: 'wav', voice: voiceId, provider: provider.id, model };
+  return { buffer: buf, format: 'wav', ext: 'wav', voice: voiceForApi, provider: provider.id, model };
 }
 
 // ── 读微信语音（走 reader）─────────────────────────────────

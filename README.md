@@ -820,6 +820,22 @@ lingshu/
 
 ## 十四、更新记录
 
+### v0.5.5（修：音色改了还是女声）
+
+两层原因，第二层是根因：
+
+1. **聊天级设置没传进去** —— `synthesize()` 内部调 `voiceConfig(cfg)` 时漏了 `talker`，
+   永远读全局。已修（`transcribe` / 试听接口同样处理）。
+2. **DeepSeek 的音色字段名是 `voice_id`，不是 `voice`** —— 传 `voice` 不报错，
+   但会被**静默忽略**，出来永远是默认女声 `stella`。
+
+决定性验证：把音色传成不存在的值 `__not_a_voice__`，
+用 `voice` 字段 → 200 返回音频（说明字段被无视）；
+用 `voice_id` 字段 → 400 明确报错「supported values are 'stella', 'tide'」。
+
+实测基频：`stella` ≈ 163Hz（女声），`tide` ≈ 74Hz（男声）。
+现在 `filehelper`、`庞宇轩` 设成 tide 后确实是 70–74Hz，没单独设置的聊天仍是 167Hz。
+
 ### v0.5.4（修：聊天级音色不生效）
 
 `voiceConfig(config, talker)` 的逻辑本身没错，配置也确实存进去了，

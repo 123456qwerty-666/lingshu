@@ -207,8 +207,29 @@ https://github.com/123456qwerty-666/lingshu/releases/download/wechat-4.1.10.27/W
 
 前置条件：该会话必须在 WeChatAgent 的白名单里（语音端点会再次校验）。
 
-### 常见失败
+### DeepSeek TTS 的坑：音色字段叫 `voice_id`，不是 `voice`
 
+这个是踩过的：传 `{"voice": "tide"}` **不报错，但音色被静默忽略**，出来的永远是默认女声
+`stella`。字段写对了才不会白折腾：
+
+```bash
+# ✅ 正确
+curl https://api.deepseek.com/v1/tools/tts \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"text":"你好","voice_id":"tide","format":"wav"}'
+
+# ❌ 错误（200 但忽略音色）
+-d '{"text":"你好","voice":"tide","format":"wav"}'
+```
+
+合法值只有两个：`stella`（女，默认）、`tide`（男）。传其它值会 **400**：
+`Invalid voice_id 'xxx': supported values are 'stella' (default), 'tide'`。
+
+实测基频：`stella` ≈ 163Hz，`tide` ≈ 74Hz。可以用这个快速判断音色到底生效没有。
+
+> OpenAI 兼容协议那边还是 `voice` 字段，两种协议的写法不一样，代码里分开处理了。
+
+### 常见失败
 | 现象 | 原因 | 处理 |
 |---|---|---|
 | `VOICE_REFERENCE_NOT_ALLOWED` | 权限条目没写进去 / 会话不在白名单 | 点「检查微信语音权限」，确认会话已加白名单 |
