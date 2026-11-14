@@ -189,6 +189,22 @@ https://github.com/123456qwerty-666/lingshu/releases/download/wechat-4.1.10.27/W
 灵枢会自动写入这一条（`ensureAudioPermission()`，先备份再原子写，不动其它插件）。
 也可以手动调 `POST /api/voice/permission` 或控制台「检查微信语音权限」按钮。
 
+**注意：这里要两个条目，少一个都不行**
+
+```json
+{
+  "plugins": {
+    "speech-recognition": { "enabled": true, "permissions": ["audio_read"], "chats": null },
+    "lingshu":            { "enabled": true, "permissions": ["audio_read"], "chats": null }
+  }
+}
+```
+
+- `speech-recognition`：读取器在**推送阶段**用的插件 id 是写死的这个。
+  没有它，语音消息会被 `reader-api.py` 直接 `continue` 掉 —— **SSE 里根本不会有这条消息**，
+  日志里什么都看不到，表现就是「我发了语音但它像没收到一样」。
+- `lingshu`：灵枢自己去 `/api/v1/voices/:id` 取音频时用的 id。
+
 前置条件：该会话必须在 WeChatAgent 的白名单里（语音端点会再次校验）。
 
 ### 常见失败
@@ -199,6 +215,7 @@ https://github.com/123456qwerty-666/lingshu/releases/download/wechat-4.1.10.27/W
 | `VOICE_MESSAGE_IDENTITY_NOT_FOUND` | 语音索引与消息库对不上 | 让用户重发一条语音再试 |
 | `VOICE_DECODE_TIMEOUT` | SILK 解码超时 | 重试；长语音容易超时 |
 | 日志里看不到 `语音转文字` | 该聊天关了语音识别，或没配 ASR 模型 | 聊天设置里打开，AI 配置里配 ASR |
+| 发了语音但日志里连「收到」都没有 | `speech-recognition` 条目缺失，读取器把它丢了 | 点「检查微信语音权限」，确认两个条目都在 |
 
 ---
 

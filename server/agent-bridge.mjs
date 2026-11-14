@@ -115,6 +115,13 @@ export function removeWhitelisted(kind, conversationId) {
  */
 export const AUDIO_PLUGIN_ID = 'lingshu';
 
+/**
+ * 读取器在「推送阶段」用的是写死的默认 id（audio_policy 的默认参数），
+ * 没有这个条目的话，语音消息会被 reader 直接丢弃 —— 连 SSE 都不会推。
+ * 所以这里还要保证 speech-recognition 这条也具备 audio_read。
+ */
+export const AUDIO_PUSH_PLUGIN_ID = 'speech-recognition';
+
 function pluginConfigPath() {
   const ws = findWorkspace();
   return ws ? path.join(ws, 'config', 'plugins.json') : null;
@@ -143,22 +150,29 @@ export function ensureAudioPermission(pluginId = AUDIO_PLUGIN_ID) {
   if (!cfg) return { ok: false, changed: false, reason: 'plugins.json 解析失败，已跳过（不会覆盖）' };
 
   cfg.plugins = cfg.plugins || {};
-  const cur = cfg.plugins[pluginId] || {};
-  const perms = new Set(cur.permissions || []);
-  const needPerm = !perms.has('audio_read');
-  const needEnable = cur.enabled !== true;
-  const needChats = cur.chats !== null && cur.chats !== undefined;
 
-  if (!needPerm && !needEnable && !needChats) return { ok: true, changed: false };
+  let changed = false;
+  // 1) 推送门禁：读取器登记语音引用时用的是默认 id，必须存在
+  // 2) 读取门禁：灵枢自己取音频时用 lingshu 这个 id
+  for (const pid of [AUDIO_PUSH_PLUGIN_ID, pluginId]) {
+    const cur = cfg.plugins[pid] || {};
+    const perms = new Set(cur.permissions || []);
+    const need = cur.enabled !== true || !perms.has('audio_read') || (cur.chats !== null && cur.chats !== undefined);
+    if (!need) continue;
+    perms.add('audio_read');
+    cfg.plugins[pid] = {
+      ...cur,
+      enabled: true,
+      permissions: [...perms],
+      chats: null,          // null = 白名单内所有会话都允许
+      note: cur.note || (pid === AUDIO_PUSH_PLUGIN_ID
+        ? '灵枢 AI 中枢：用于让读取器放行语音消息（不参与转写）'
+        : '灵枢 AI 中枢：仅用于读取语音做转写'),
+    };
+    changed = true;
+  }
 
-  perms.add('audio_read');
-  cfg.plugins[pluginId] = {
-    ...cur,
-    enabled: true,
-    permissions: [...perms],
-    chats: null,          // null = 白名单内所有会话都允许
-    note: cur.note || '灵枢 AI 中枢：仅用于读取语音做转写',
-  };
+  if (!changed) return { ok: true, changed: false };
 
   try {
     if (fs.existsSync(fp)) {

@@ -644,8 +644,10 @@ export async function observeTurn({
       },
     ], { maxTokens: 700, temperature: 0.2 });
     const raw = String(r.content || '');
-    const jsonText = raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1);
-    parsed = JSON.parse(jsonText);
+    const a = raw.indexOf('{');
+    const b = raw.lastIndexOf('}');
+    if (a < 0 || b <= a) return { skipped: 'no_items' };   // 模型说「没什么值得记的」
+    parsed = JSON.parse(raw.slice(a, b + 1));
   } catch (e) {
     return { skipped: 'tag_failed', error: e.message };
   }

@@ -27,6 +27,7 @@ import {
 } from './memory.mjs';
 import { compressContext, contextUsage } from './compressor.mjs';
 import { stripTimeEcho } from './time.mjs';
+import { saveToCache, copyToCache, recordMedia, mergeMediaIntoMessages, pruneCache } from './media-log.mjs';
 import {
   voiceConfig, transcribe, synthesize, fetchVoiceWav, saveAudioFile,
   trimWav, wavInfo, cleanupAudio, VOICE_CATALOG, voiceCapabilityNote,
@@ -228,6 +229,15 @@ async function processMessage(msg, config) {
         const wav = await fetchVoiceWav(getReader(), msg.voice.id, key, AUDIO_PLUGIN_ID);
         const { buf, info, trimmed } = trimWav(wav, 120);
         if (trimmed) log(`语音超过 120 秒，已截断后识别（${info?.durationSeconds}s）`, 'warn');
+        // 留底给控制台播放
+        try {
+          const cacheFile = saveToCache(buf, { ext: 'wav', tag: 'voice-in' });
+          recordMedia(msg.talker, {
+            dir: 'in', kind: 'voice', file: cacheFile,
+            ts: msg.timestamp || Date.now(),
+            duration: msg.voice.durationSeconds || info?.durationSeconds || null,
+          });
+        } catch { /* ignore */ }
         const r = await transcribe(buf, { config, onLog: (m) => log(m, 'debug') });
         msg.text = `[语音 ${Math.round(msg.voice.durationSeconds || info?.durationSeconds || 0)}s] ${r.text}`;
         log(`语音转文字：${r.text.slice(0, 50)}`);
@@ -352,6 +362,11 @@ async function processMessage(msg, config) {
             try {
               await sendImageFile(msg.talker, p);
               sentImagePaths.push(p);
+              // 留底：原文件马上会被删，控制台需要一份能显示的副本
+              try {
+                const cacheFile = copyToCache(p, { tag: 'image-out' });
+                recordMedia(msg.talker, { dir: 'out', kind: 'image', file: cacheFile, ts: Date.now() });
+              } catch { /* ignore */ }
               log(`已发送图片 ${path.basename(p)} → ${msg.talker}`);
               if (p.startsWith(path.join(MEDIA_DIR, 'pending-send'))) {
                 try { fs.unlinkSync(p); } catch { /* ignore */ }
@@ -443,6 +458,14 @@ async function processMessage(msg, config) {
     try {
       await sendFileMsg(msg.talker, voicePath);
       voiceSent = 1;
+      try {
+        const cacheFile = copyToCache(voicePath, { tag: 'voice-out' });
+        recordMedia(msg.talker, {
+          dir: 'out', kind: 'voice', file: cacheFile, ts: Date.now(),
+          duration: wavInfo(fs.readFileSync(voicePath))?.durationSeconds || null,
+          text: replyText,
+        });
+      } catch { /* ignore */ }
     } catch (e) {
       log(`语音文件发送失败: ${e.message}`, 'warn');
       // 只发语音的场合，声音发不出去就把文字补上，别让对方干等
@@ -522,6 +545,14 @@ async function sendVoiceTool(args, msg, config, sink) {
     const fp = saveAudioFile(tts.buffer, tts.ext, 'ai');
     await sendFileMsg(msg.talker, fp);
     sink.push(fp);
+    try {
+      const cacheFile = copyToCache(fp, { tag: 'voice-out' });
+      recordMedia(msg.talker, {
+        dir: 'out', kind: 'voice', file: cacheFile, ts: Date.now(),
+        duration: info?.durationSeconds ?? null,
+        text: text.slice(0, 120),
+      });
+    } catch { /* ignore */ }
     log(`AI 主动发语音：${(info?.durationSeconds || 0).toFixed(1)}s · 音色 ${tts.voice}`);
     return {
       success: true,
@@ -608,6 +639,19 @@ async function attachImages(messages, images, msg) {
           const kb = Math.round((data.b64.length * 0.75) / 1024);
           parts.push({ type: 'image_ref', dataUrl: `data:${data.mime || 'image/jpeg'};base64,${data.b64}` });
           okCount++;
+          // 留底给控制台显示（历史消息里取不到图片字节）
+          try {
+            const cacheFile = saveToCache(Buffer.from(data.b64, 'base64'), {
+              mime: data.mime, tag: isSticker ? 'sticker' : 'image',
+            });
+            recordMedia(msg?.talker, {
+              dir: 'in',
+              kind: isSticker ? 'sticker' : 'image',
+              file: cacheFile,
+              ts: (msg?.timestamp || Date.now()),
+              text: msg?.text || '',
+            });
+          } catch { /* ignore */ }
           log(`已读取${isSticker ? '表情包' : '图片'} ${p.imageId.slice(0, 10)}… ${data.width || '?'}x${data.height || '?'} ${kb}KB (${Date.now() - t0}ms)`, 'debug');
         } else {
           parts.push({ type: 'text', text: '[图片数据为空]' });
@@ -845,7 +889,10 @@ async function route(req, res) {
     const limit = Math.min(200, parseInt(url.searchParams.get('limit') || '40', 10));
     if (!talker) { sendJson(res, 400, { error: '缺少 talker' }); return; }
     try {
-      sendJson(res, 200, { messages: await getChatHistory(talker, limit) });
+      const msgs = await getChatHistory(talker, limit);
+      const { messages, orphans } = mergeMediaIntoMessages(msgs, talker);
+      const all = [...messages, ...orphans].sort((a, b) => (a.createTime || 0) - (b.createTime || 0));
+      sendJson(res, 200, { messages: all, withMedia: true });
     } catch (e) { sendJson(res, 500, { error: e.message }); }
     return;
   }
@@ -1579,6 +1626,10 @@ async function main() {
   try {
     const n = cleanupAudio(3600000);
     if (n) log(`已清理 ${n} 个过期语音文件`, 'debug');
+  } catch { /* ignore */ }
+  try {
+    const n = pruneCache(14 * 86400000);
+    if (n) log(`已清理 ${n} 个过期媒体缓存`, 'debug');
   } catch { /* ignore */ }
 
   // 首次启动：把 wechatagent.json 里已授权的账号昵称同步过来，用于群聊 @ 判定
