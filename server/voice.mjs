@@ -186,9 +186,9 @@ function pickModel(section, provider, kind) {
  * @param {Buffer} wavBuffer
  * @returns {Promise<{text:string, durationMs?:number, provider:string, model:string}>}
  */
-export async function transcribe(wavBuffer, { config = null, providerId = null, modelId = null, onLog } = {}) {
+export async function transcribe(wavBuffer, { config = null, talker = null, providerId = null, modelId = null, onLog } = {}) {
   const cfg = config || await loadConfig();
-  const vc = voiceConfig(cfg);
+  const vc = voiceConfig(cfg, talker);
   const pid = providerId || vc.asr.providerId;
   if (!pid) throw new Error('还没有配置语音识别模型（去「AI 配置 → 语音」里选一个）');
   const provider = await providerFor(pid);
@@ -231,9 +231,10 @@ export async function transcribe(wavBuffer, { config = null, providerId = null, 
 /**
  * @returns {Promise<{buffer:Buffer, format:string, ext:string, voice:string, provider:string, model:string}>}
  */
-export async function synthesize(text, { config = null, providerId = null, modelId = null, voice = null, onLog } = {}) {
+export async function synthesize(text, { config = null, talker = null, providerId = null, modelId = null, voice = null, onLog } = {}) {
   const cfg = config || await loadConfig();
-  const vc = voiceConfig(cfg);
+  // 必须带上 talker，否则聊天级设置（音色/发送方式）永远不生效
+  const vc = voiceConfig(cfg, talker);
   const pid = providerId || vc.tts.providerId;
   if (!pid) throw new Error('还没有配置语音合成模型（去「AI 配置 → 语音」里选一个）');
   const provider = await providerFor(pid);

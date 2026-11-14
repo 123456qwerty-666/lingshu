@@ -276,7 +276,7 @@ async function processMessage(msg, config) {
             duration: msg.voice.durationSeconds || got.durationSeconds || info?.durationSeconds || null,
           });
         } catch { /* ignore */ }
-        const r = await transcribe(buf, { config, onLog: (m) => log(m, 'debug') });
+        const r = await transcribe(buf, { config, talker: msg.talker, onLog: (m) => log(m, 'debug') });
         const durSec = Math.round(msg.voice.durationSeconds || got.durationSeconds || info?.durationSeconds || 0);
         if (r.text) {
           msg.text = `[语音 ${durSec}s] ${r.text}`;
@@ -469,7 +469,7 @@ async function processMessage(msg, config) {
       : Math.random() < voiceCfg.randomRate;
     if (wantVoice) {
       try {
-        const tts = await synthesize(replyText, { config, onLog: (m) => log(m, 'debug') });
+        const tts = await synthesize(replyText, { config, talker: msg.talker, onLog: (m) => log(m, 'debug') });
         const info = wavInfo(tts.buffer);
         const dur = info?.durationSeconds || 0;
         const limit = voiceCfg.maxSeconds || 0;
@@ -583,6 +583,7 @@ async function sendVoiceTool(args, msg, config, sink) {
   try {
     const tts = await synthesize(text.slice(0, 4000), {
       config,
+      talker: msg.talker,
       voice: args?.voice || null,
       onLog: (m) => log(m, 'debug'),
     });
@@ -1112,6 +1113,7 @@ async function route(req, res) {
     const text = String(body.text || '你好，我是灵枢，这是一段语音测试。').slice(0, 300);
     try {
       const tts = await synthesize(text, {
+        talker: body.talker || null,
         providerId: body.providerId || null,
         modelId: body.modelId || null,
         voice: body.voice || null,

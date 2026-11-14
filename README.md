@@ -820,6 +820,19 @@ lingshu/
 
 ## 十四、更新记录
 
+### v0.5.4（修：聊天级音色不生效）
+
+`voiceConfig(config, talker)` 的逻辑本身没错，配置也确实存进去了，
+但 `synthesize()` / `transcribe()` 内部调用的是 `voiceConfig(cfg)` ——
+**没传 talker**，所以永远读全局设置。表现就是：在某个聊天里把音色改成男声，
+发出来还是全局默认的女声。
+
+现在 `synthesize` / `transcribe` / 试听接口都接受 `talker`，
+自动发送和 `send_voice` 工具都会带上当前聊天，聊天级音色、发送方式才真正生效。
+
+验证：`filehelper` 设为 `tide`（男）后，日志变成 `语音合成请求：deepseek/默认 音色=tide`；
+其它未单独设置的聊天仍是 `stella`。
+
 ### v0.5.3（聊天页双输入框）
 
 聊天页底部原来只有一个输入框，现在拆成两个，用途不同：
