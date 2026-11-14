@@ -172,6 +172,24 @@ export class ReaderClient {
   }
 
   /**
+   * 取二进制（语音等）。reader 的语音端点是带令牌的，
+   * 返回的不是 JSON 而是音频字节。
+   */
+  async fetchBinary(route, { timeoutMs = 30000, headers = {} } = {}) {
+    const url = new URL(route, this.baseUrl);
+    const resp = await fetch(url, {
+      headers: { Authorization: `Bearer ${this.token}`, ...headers },
+      redirect: 'error',
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!resp.ok) {
+      const t = await resp.text().catch(() => '');
+      throw new Error(`Reader ${resp.status}: ${t.slice(0, 200)}`);
+    }
+    return Buffer.from(await resp.arrayBuffer());
+  }
+
+  /**
    * 长连接订阅 SSE。Reader 每 2 秒发一次心跳，因此把「90 秒无任何数据」视为死连接并重连。
    */
   async connectSSE(onEvent, { onStatus, onRaw } = {}) {

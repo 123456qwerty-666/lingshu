@@ -92,8 +92,17 @@
 | `/api/memory/profile` | POST | 重建画像 `{talker, memberKey}` |
 | `/api/memory/sweep` | POST | 全库巡检（遗忘 + 压缩） |
 
-## 调试
+## 语音
 
+| 端点 | 方法 | 说明 |
+|---|---|---|
+| `/api/voice/catalog` | GET | 内置音色表 + 当前配置；带 `?talker=` 返回该聊天的生效配置 |
+| `/api/voice/permission` | POST | 向 WeChatAgent 登记语音读取权限（`plugins.json` 的 `audio_read`），幂等 |
+| `/api/voice/tts` | POST | 试听合成 `{text, providerId?, modelId?, voice?}` → `{audio:base64, durationSeconds, bytes}` |
+
+发送侧不单独暴露接口：模型通过内置工具 `send_voice` 调用，或按聊天设置自动触发。
+
+## 调试
 | 端点 | 方法 | 说明 |
 |---|---|---|
 | `/api/debug/send` | POST | 模拟收到一条消息，走完整链路（会真的发出回复） |

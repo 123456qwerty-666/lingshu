@@ -12,11 +12,11 @@ import {
   encryptSecret, ROOT_DIR,
 } from './config.mjs';
 import {
-  initDrivers, getReader, getHook, getState, sendText, sendImageFile,
+  initDrivers, getReader, getHook, getState, sendText, sendImageFile, sendFileMsg,
   startListening, stopListening, getSessions, getChatHistory, searchChats,
   refreshReaderStatus, bumpReceived, bumpSkipped,
 } from './wechat.mjs';
-import { getAgentWhitelist, ensureWhitelisted, removeWhitelisted } from './agent-bridge.mjs';
+import { getAgentWhitelist, ensureWhitelisted, removeWhitelisted, ensureAudioPermission, AUDIO_PLUGIN_ID, conversationKeyOf } from './agent-bridge.mjs';
 import { ai, setConfigSnapshot, endpoint, friendlyAIError } from './ai.mjs';
 import { router, ChatContext } from './router.mjs';
 import {
@@ -27,6 +27,10 @@ import {
 } from './memory.mjs';
 import { compressContext, contextUsage } from './compressor.mjs';
 import { stripTimeEcho } from './time.mjs';
+import {
+  voiceConfig, transcribe, synthesize, fetchVoiceWav, saveAudioFile,
+  trimWav, wavInfo, cleanupAudio, VOICE_CATALOG, voiceCapabilityNote,
+} from './voice.mjs';
 import { listPersonasBrief, getPersona } from './personas.mjs';
 import {
   initPlugins, getToolList, scaffoldPlugin, deletePlugin, reloadPlugins,
@@ -130,11 +134,13 @@ function chatSettings(config, talker) {
     reply: { ...config.wechat.reply, ...(chat.reply || {}) },
     memory: memoryConfig(config, talker),
     context: { ...config.context, ...(chat.context || {}) },
+    voice: voiceConfig(config, talker),
   };
 }
 
 // ── 消息处理主流程 ────────────────────────────────────────
 const processing = new Set(); // talker 级别串行，避免同一聊天并发乱序
+let audioPermissionReady = false;   // 是否已向 WeChatAgent 登记语音读取权限
 const seenRawids = new Map(); // rawid -> ts，SSE 重推 / 图片重试去重
 
 async function handleIncoming(event, { source = 'sse' } = {}) {
@@ -206,6 +212,44 @@ async function processMessage(msg, config) {
     }
   }
 
+  // ── 语音：先转成文字，后面全部按普通文本处理 ──
+  const voiceCfg = voiceConfig(config, msg.talker);
+  if (msg.contentType === 34) {
+    const looksEmpty = !msg.text || /^\s*\[?语音\]?\s*$/.test(msg.text);
+    if (msg.voice?.id && voiceCfg.asrEnabled && voiceCfg.asrConfigured) {
+      try {
+        if (!audioPermissionReady) {
+          const p = ensureAudioPermission();
+          audioPermissionReady = p.ok;
+          if (!p.ok) log(`语音权限登记失败：${p.reason || '未知'}`, 'warn');
+          else if (p.changed) log('已向 WeChatAgent 登记语音读取权限（lingshu / audio_read）');
+        }
+        const key = conversationKeyOf(msg.kind, msg.conversationId);
+        const wav = await fetchVoiceWav(getReader(), msg.voice.id, key, AUDIO_PLUGIN_ID);
+        const { buf, info, trimmed } = trimWav(wav, 120);
+        if (trimmed) log(`语音超过 120 秒，已截断后识别（${info?.durationSeconds}s）`, 'warn');
+        const r = await transcribe(buf, { config, onLog: (m) => log(m, 'debug') });
+        msg.text = `[语音 ${Math.round(msg.voice.durationSeconds || info?.durationSeconds || 0)}s] ${r.text}`;
+        log(`语音转文字：${r.text.slice(0, 50)}`);
+      } catch (e) {
+        log(`语音转文字失败: ${e.message}`, 'warn');
+        if (looksEmpty) msg.text = '[收到一条语音，但转写失败了]';
+      }
+    } else if (looksEmpty) {
+      msg.text = voiceCfg.asrEnabled
+        ? '[收到一条语音，但还没配置语音识别模型]'
+        : '[收到一条语音（该聊天未开启语音识别）]';
+    }
+  }
+
+  // 告诉模型「你有嘴」，否则它不会主动用 send_voice
+  if (voiceCfg.enabled && voiceCfg.ttsConfigured) {
+    settings.systemPrompt += '\n\n【语音】你能用 send_voice 把话念出来发给对方。'
+      + '对方让你唱歌、要求用语音说、或者你想用语气表达情绪时，就调用它。'
+      + 'text 只写要念出来的字，可以带语气词（唉、哈哈）和停顿「……」；不要写旁白或括号动作。'
+      + '发完用一句话告诉对方已经发了，别把内容重复一遍。';
+  }
+
   // ── 记忆：想起旧事，拼进系统提示词 ──
   let memoryUsed = [];
   if (settings.memory?.enabled) {
@@ -259,7 +303,26 @@ async function processMessage(msg, config) {
   }
 
   const tools = getToolList(settings.pluginFilter);
+  // 内置语音工具：让模型自己决定「这条要不要用语音」
+  if (voiceCfg.ttsConfigured && voiceCfg.enabled) {
+    tools.push({
+      name: 'send_voice',
+      pluginId: 'builtin-voice',
+      description: '把一段话合成语音，以音频文件发给对方。适合：对方让你唱歌/说一遍/用语音、你需要用语气表达情绪、或者内容本身适合念出来。'
+        + 'text 只写要念的内容，可以写歌词、语气词（如「唉」「哈哈」）和停顿「……」；不要写旁白、解释、括号动作。'
+        + '发送成功后，用一句话简短告诉对方已经发了，不要再把内容重复一遍。',
+      parameters: {
+        type: 'object',
+        properties: {
+          text: { type: 'string', description: '要念出来的内容，不要带解释或旁白' },
+          voice: { type: 'string', description: '可选音色 id，留空用默认音色' },
+        },
+        required: ['text'],
+      },
+    });
+  }
   const sentImagePaths = [];
+  const sentVoicePaths = [];
 
   let replyText = '';
   let toolRuns = [];
@@ -272,6 +335,9 @@ async function processMessage(msg, config) {
       maxRounds: 4,
       onLog: (m, lvl) => log(m, lvl || 'info'),
       callTool: async (name, args) => {
+        if (name === 'send_voice') {
+          return sendVoiceTool(args, msg, config, sentVoicePaths);
+        }
         const toolResult = await callToolByName(name, args, {
           talker: msg.talker, kind: msg.kind, conversationId: msg.conversationId,
           senderWxid: msg.senderWxid, senderName: msg.senderName,
@@ -314,6 +380,8 @@ async function processMessage(msg, config) {
     if (fallback) {
       replyText = fallback;
       log('模型未输出正文，已用工具结果兜底回复', 'warn');
+    } else if (sentVoicePaths.length) {
+      log('模型只调用了语音工具，没有额外文字', 'debug');
     } else {
       log('模型返回空内容，未回复', 'warn');
       return { ok: false, reason: 'empty_reply' };
@@ -331,17 +399,61 @@ async function processMessage(msg, config) {
   }
 
   const parts = replyText.trim() ? router.splitReply(replyText, config) : [];
-  if (parts.length) {
-    for (let i = 0; i < parts.length; i++) {
+
+  // ── 语音合成：把回复念成音频，以音频文件发出 ──
+  let voicePath = '';
+  if (replyText.trim() && voiceCfg.ttsConfigured && voiceCfg.sendMode !== 'off') {
+    const wantVoice = voiceCfg.sendMode !== 'random'
+      ? true
+      : Math.random() < voiceCfg.randomRate;
+    if (wantVoice) {
       try {
-        await sendText(msg.talker, parts[i]);
+        const tts = await synthesize(replyText, { config, onLog: (m) => log(m, 'debug') });
+        const info = wavInfo(tts.buffer);
+        const dur = info?.durationSeconds || 0;
+        const limit = voiceCfg.maxSeconds || 0;
+        if (limit > 0 && dur > limit) {
+          log(`语音合成 ${dur.toFixed(1)}s 超过 ${limit}s 上限，不发送`, 'warn');
+        } else {
+          voicePath = saveAudioFile(tts.buffer, tts.ext, 'reply');
+          log(`语音合成完成：${dur ? dur.toFixed(1) + 's' : '时长未知'} · 音色 ${tts.voice}`);
+        }
+      } catch (e) {
+        log(`语音合成失败: ${e.message}`, 'warn');
+      }
+    }
+  }
+
+  const textParts = (voiceCfg.sendMode === 'onlyVoice' && voicePath) ? [] : parts;
+
+  if (textParts.length) {
+    for (let i = 0; i < textParts.length; i++) {
+      try {
+        await sendText(msg.talker, textParts[i]);
       } catch (e) {
         log(`发送失败: ${e.message}`, 'error');
         break;
       }
-      if (i < parts.length - 1) await new Promise(r => setTimeout(r, settings.reply?.minIntervalMs || 1200));
+      if (i < textParts.length - 1) await new Promise(r => setTimeout(r, settings.reply?.minIntervalMs || 1200));
     }
-    log(`已回复 ${msg.talker}（${parts.length} 条${sentImagePaths.length ? `，${sentImagePaths.length} 张图` : ''}${toolRuns.length ? `，${toolRuns.length} 次工具` : ''}）`);
+  }
+
+  let voiceSent = 0;
+  if (voicePath) {
+    try {
+      await sendFileMsg(msg.talker, voicePath);
+      voiceSent = 1;
+    } catch (e) {
+      log(`语音文件发送失败: ${e.message}`, 'warn');
+      // 只发语音的场合，声音发不出去就把文字补上，别让对方干等
+      if (!textParts.length) {
+        for (const p of parts) { try { await sendText(msg.talker, p); } catch { /* ignore */ } }
+      }
+    }
+  }
+
+  if (textParts.length || voiceSent || sentVoicePaths.length) {
+    log(`已回复 ${msg.talker}（${textParts.length} 条${voiceSent || sentVoicePaths.length ? `，${voiceSent + sentVoicePaths.length} 条语音` : ''}${sentImagePaths.length ? `，${sentImagePaths.length} 张图` : ''}${toolRuns.length ? `，${toolRuns.length} 次工具` : ''}）`);
   }
 
   // ── 记忆沉淀（异步，不阻塞回复）──
@@ -392,6 +504,35 @@ async function afterTurnMemory(msg, config, context, replyText) {
     }
   } catch (e) {
     log(`记忆压缩失败: ${e.message}`, 'warn');
+  }
+}
+
+/** 模型主动发语音：合成 → 落盘 → 发文件。不设时长上限（文件不受语音 60 秒限制） */
+async function sendVoiceTool(args, msg, config, sink) {
+  const text = String(args?.text || '').trim();
+  if (!text) return { success: false, error: 'text 不能为空' };
+  try {
+    const tts = await synthesize(text.slice(0, 4000), {
+      config,
+      voice: args?.voice || null,
+      onLog: (m) => log(m, 'debug'),
+    });
+    if (!tts.buffer?.length) return { success: false, error: '合成结果是空音频' };
+    const info = wavInfo(tts.buffer);
+    const fp = saveAudioFile(tts.buffer, tts.ext, 'ai');
+    await sendFileMsg(msg.talker, fp);
+    sink.push(fp);
+    log(`AI 主动发语音：${(info?.durationSeconds || 0).toFixed(1)}s · 音色 ${tts.voice}`);
+    return {
+      success: true,
+      sent: true,
+      durationSeconds: info?.durationSeconds ?? null,
+      voice: tts.voice,
+      hint: '已发送成功。用一句话告诉对方已经发了即可，不要把内容再重复一遍。',
+    };
+  } catch (e) {
+    log(`AI 发语音失败: ${e.message}`, 'warn');
+    return { success: false, error: e.message };
   }
 }
 
@@ -849,6 +990,56 @@ async function route(req, res) {
   }
 
   // ── 一键接入 DeepSeek（填 Key 就能用）──
+  // ── 语音 ──────────────────────────────────────────────
+  if (p === '/api/voice/catalog' && method === 'GET') {
+    const cfg = await loadConfig();
+    const talker = url.searchParams.get('talker') || null;
+    sendJson(res, 200, {
+      catalog: VOICE_CATALOG,
+      config: talker ? voiceConfig(cfg, talker) : (cfg.voice || {}),
+      note: voiceCapabilityNote(),
+      providers: Object.entries(cfg.ai.providers || {}).map(([id, p]) => ({ id, name: p.name || id })),
+    });
+    return;
+  }
+
+  if (p === '/api/voice/permission' && method === 'POST') {
+    const r = ensureAudioPermission();
+    audioPermissionReady = r.ok;
+    if (r.ok) log(`语音读取权限已就绪${r.changed ? '（本次已写入 plugins.json）' : ''}`);
+    else log(`语音读取权限登记失败：${r.reason}`, 'warn');
+    sendJson(res, 200, r);
+    return;
+  }
+
+  // 试听：用当前 TTS 配置合成一段，返回 base64 给浏览器直接播
+  if (p === '/api/voice/tts' && method === 'POST') {
+    const body = await readJsonBody(req);
+    const text = String(body.text || '你好，我是灵枢，这是一段语音测试。').slice(0, 300);
+    try {
+      const tts = await synthesize(text, {
+        providerId: body.providerId || null,
+        modelId: body.modelId || null,
+        voice: body.voice || null,
+        onLog: (m) => log(m, 'debug'),
+      });
+      const info = wavInfo(tts.buffer);
+      sendJson(res, 200, {
+        ok: true,
+        voice: tts.voice,
+        provider: tts.provider,
+        model: tts.model,
+        bytes: tts.buffer.length,
+        durationSeconds: info?.durationSeconds || null,
+        audio: tts.buffer.toString('base64'),
+        mime: 'audio/wav',
+      });
+    } catch (e) {
+      sendJson(res, 500, { error: e.message });
+    }
+    return;
+  }
+
   if (p === '/api/ai/quick' && method === 'POST') {
     const body = await readJsonBody(req);
     const apiKey = String(body.apiKey || '').trim();
@@ -899,6 +1090,17 @@ async function route(req, res) {
         vision: { providerId, modelId: visionPick.id },
       } });
 
+      // 4.5) 语音：DeepSeek 的 ASR/TTS 是独立端点，模型名不用填
+      let voiceReady = false;
+      if (providerId === 'deepseek') {
+        await saveConfig({ voice: {
+          enabled: true,
+          asr: { enabled: true, providerId, modelId: '', protocol: 'deepseek' },
+          tts: { enabled: true, providerId, modelId: '', protocol: 'deepseek', voice: 'stella', format: 'wav' },
+        } });
+        voiceReady = true;
+      }
+
       // 5) 顺手测一下
       let test = null;
       try {
@@ -920,6 +1122,7 @@ async function route(req, res) {
         visionModel: visionPick.id,
         models,
         refreshError: refreshError || undefined,
+        voiceReady,
         test,
       });
     } catch (e) {
@@ -1371,6 +1574,12 @@ async function main() {
 
   const cfg = await loadConfig();
   setConfigSnapshot(cfg);
+
+  // 清掉上次遗留的合成音频（超过 1 小时的）
+  try {
+    const n = cleanupAudio(3600000);
+    if (n) log(`已清理 ${n} 个过期语音文件`, 'debug');
+  } catch { /* ignore */ }
 
   // 首次启动：把 wechatagent.json 里已授权的账号昵称同步过来，用于群聊 @ 判定
   try {

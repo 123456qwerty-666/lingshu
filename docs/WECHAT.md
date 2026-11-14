@@ -144,6 +144,64 @@ https://github.com/123456qwerty-666/lingshu/releases/download/wechat-4.1.10.27/W
 
 ---
 
+## 零之四、语音：能收，发的是文件不是语音气泡
+
+先把结论放前面，免得白折腾：
+
+| 能力 | 支持 | 说明 |
+|---|---|---|
+| 收语音 → 转文字 | ✅ | 走读取器的 `/api/v1/voices/:id` |
+| 发语音气泡（type 34） | ❌ | 底层 Hook 没有这个接口 |
+| 发音频文件 | ✅ | 对方可点开播放，显示为文件气泡 |
+
+### 为什么发不了语音气泡
+
+微信语音消息不是"把一段音频发过去"这么简单：得先按微信的格式编码成 SILK，
+再**上传到微信 CDN 拿到 media id**，然后构造 type=34 的消息体。当前 Hook：
+
+- 只开放 `SendTextMsg` / `SendImgMsg` / `SendFileMsg`（文件走 49/6）
+- 源码里没有任何 voice / silk / CDN 相关实现
+- README 明确写了「当前 main 分支已移除 … CDN … 相关 Hook 安装与处理代码」
+
+上游 WeChatAgent 最新版（0.4.3）也没有补上。所以这一步只能等上游，或者自己逆向 + 重编译 DLL
+（需要微信内部偏移表 + CDN 上传协议，工作量和风险都很大）。
+
+**因此灵枢把 TTS 结果按音频文件发出去。** 好处是：不受微信语音 60 秒限制，
+长一点也没关系（`voice.maxSeconds` 默认 0 = 不限）。
+
+### 收语音：怎么拿到音频
+
+读取器的语音端点是 `/api/v1/voices/<64位id>?conversationKey=...&pluginId=...&format=wav`，
+它的鉴权只查 WeChatAgent 的 `config/plugins.json`：
+
+```json
+{
+  "plugins": {
+    "lingshu": {
+      "enabled": true,
+      "permissions": ["audio_read"],
+      "chats": null
+    }
+  }
+}
+```
+
+灵枢会自动写入这一条（`ensureAudioPermission()`，先备份再原子写，不动其它插件）。
+也可以手动调 `POST /api/voice/permission` 或控制台「检查微信语音权限」按钮。
+
+前置条件：该会话必须在 WeChatAgent 的白名单里（语音端点会再次校验）。
+
+### 常见失败
+
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| `VOICE_REFERENCE_NOT_ALLOWED` | 权限条目没写进去 / 会话不在白名单 | 点「检查微信语音权限」，确认会话已加白名单 |
+| `VOICE_MESSAGE_IDENTITY_NOT_FOUND` | 语音索引与消息库对不上 | 让用户重发一条语音再试 |
+| `VOICE_DECODE_TIMEOUT` | SILK 解码超时 | 重试；长语音容易超时 |
+| 日志里看不到 `语音转文字` | 该聊天关了语音识别，或没配 ASR 模型 | 聊天设置里打开，AI 配置里配 ASR |
+
+---
+
 ## 一、配置
 
 控制台 →「微信设置」：

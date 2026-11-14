@@ -103,3 +103,80 @@ export function removeWhitelisted(kind, conversationId) {
   writeAgentConfig(cfg);
   return { removed: true };
 }
+
+// ── 语音读取权限 ──────────────────────────────────────────
+/**
+ * reader 的 /api/v1/voices/:id 会去读 WeChatAgent 的 config/plugins.json，
+ * 要求调用方以某个 pluginId 身份出现，且该条目满足：
+ *   enabled === true、permissions 含 'audio_read'、chats 为 null 或包含该会话
+ *
+ * 灵枢并不真的是它的插件，但这一步只是查这个 JSON，
+ * 所以把自己登记成一个只读语音的条目即可（不涉及注入，也不影响其它插件）。
+ */
+export const AUDIO_PLUGIN_ID = 'lingshu';
+
+function pluginConfigPath() {
+  const ws = findWorkspace();
+  return ws ? path.join(ws, 'config', 'plugins.json') : null;
+}
+
+export function readPluginConfig() {
+  const fp = pluginConfigPath();
+  if (!fp) return null;
+  try {
+    if (!fs.existsSync(fp)) return { plugins: {} };
+    return JSON.parse(fs.readFileSync(fp, 'utf8').replace(/^\uFEFF/, ''));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 确保灵枢拥有语音读取权限。幂等，可反复调用。
+ * @returns {{ok:boolean, changed:boolean, reason?:string}}
+ */
+export function ensureAudioPermission(pluginId = AUDIO_PLUGIN_ID) {
+  const fp = pluginConfigPath();
+  if (!fp) return { ok: false, changed: false, reason: '找不到 WeChatAgent 工作区' };
+
+  const cfg = readPluginConfig();
+  if (!cfg) return { ok: false, changed: false, reason: 'plugins.json 解析失败，已跳过（不会覆盖）' };
+
+  cfg.plugins = cfg.plugins || {};
+  const cur = cfg.plugins[pluginId] || {};
+  const perms = new Set(cur.permissions || []);
+  const needPerm = !perms.has('audio_read');
+  const needEnable = cur.enabled !== true;
+  const needChats = cur.chats !== null && cur.chats !== undefined;
+
+  if (!needPerm && !needEnable && !needChats) return { ok: true, changed: false };
+
+  perms.add('audio_read');
+  cfg.plugins[pluginId] = {
+    ...cur,
+    enabled: true,
+    permissions: [...perms],
+    chats: null,          // null = 白名单内所有会话都允许
+    note: cur.note || '灵枢 AI 中枢：仅用于读取语音做转写',
+  };
+
+  try {
+    if (fs.existsSync(fp)) {
+      const dir = path.join(DATA_DIR, 'backups');
+      fs.mkdirSync(dir, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      fs.copyFileSync(fp, path.join(dir, `plugins-${stamp}.json`));
+    }
+    const tmp = `${fp}.lingshu.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2), 'utf8');
+    fs.renameSync(tmp, fp);
+    return { ok: true, changed: true };
+  } catch (e) {
+    return { ok: false, changed: false, reason: e.message };
+  }
+}
+
+/** reader 语音端点需要的 conversationKey：wechat:private:<conversationId> */
+export function conversationKeyOf(kind, conversationId) {
+  return `wechat:${kind === 'group' ? 'group' : 'private'}:${String(conversationId || '').trim()}`;
+}

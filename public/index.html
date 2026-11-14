@@ -218,7 +218,7 @@ input.ctl,select.ctl,textarea.ctl{width:100%;padding:8px 11px;background:var(--s
       <div class="brand-mark">枢</div>
       <div class="brand-text">
         <h1>灵枢</h1>
-        <small>AI 中枢 v0.4.2</small>
+        <small>AI 中枢 v0.5.0</small>
       </div>
     </div>
     <nav class="nav">
@@ -404,6 +404,7 @@ input.ctl,select.ctl,textarea.ctl{width:100%;padding:8px 11px;background:var(--s
           <div class="hint dim">主模型被限流 / 报错时会自动降级到其它已配置提供商（优先用上次成功的那个），降级过程会写进日志。</div>
         </div>
 
+        <div id="voice-card"></div>
         <div id="providers-container"></div>
         <button class="btn" onclick="showAddProvider()">+ 添加提供商</button>
       </div>
@@ -585,7 +586,7 @@ document.querySelectorAll('.nav-item').forEach(el => el.addEventListener('click'
 
 // ── 刷新 ──
 async function refreshAll() {
-  await Promise.allSettled([loadHealth(), loadPlugins(), loadProviders(), loadPersonas()]);
+  await Promise.allSettled([loadHealth(), loadPlugins(), loadProviders(), loadPersonas(), loadVoice()]);
   await Promise.allSettled([loadConfig(), loadChats()]);
   renderDashboard();
   if (document.getElementById('page-memory')?.classList.contains('active')) loadMemory();
@@ -830,6 +831,136 @@ async function applyPersonaToChat(talker) {
   } catch (e) { toast('失败: ' + e.message, 'error'); }
 }
 
+// ── 语音 ──
+const V = { catalog: null, cfg: null, providers: [], note: '' };
+
+async function loadVoice() {
+  const d = await apiSafe('/voice/catalog');
+  if (!d) return;
+  V.catalog = d.catalog || {};
+  V.cfg = d.config || {};
+  V.providers = d.providers || [];
+  V.note = d.note || '';
+  renderVoiceCard();
+}
+
+function voiceProtoOptions(cur) {
+  return Object.entries(V.catalog || {}).map(([k, v]) =>
+    `<option value="${esc(k)}" ${cur === k ? 'selected' : ''}>${esc(k)} — ${esc(v.note || '')}</option>`
+  ).join('');
+}
+
+function renderVoiceCard() {
+  const el = document.getElementById('voice-card');
+  if (!el) return;
+  const asr = V.cfg.asr || {};
+  const tts = V.cfg.tts || {};
+  const provOpts = (sel) => '<option value="">（未选择）</option>' +
+    V.providers.map(p => `<option value="${esc(p.id)}" ${sel === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
+  const proto = tts.protocol || 'deepseek';
+  const voices = (V.catalog[proto] || {}).voices || [];
+  const mode = V.cfg.sendMode || 'off';
+  const modes = [
+    ['off', '不发语音（AI 需要时会主动发）'],
+    ['withText', '文字 + 语音'],
+    ['onlyVoice', '只发语音'],
+    ['random', '随机穿插'],
+  ];
+
+  el.className = 'card accent';
+  el.innerHTML = `
+    <h3>🔊 语音<span class="hint">收：语音转文字 · 发：文字转语音</span></h3>
+    <div class="hint" style="margin-bottom:12px;white-space:pre-line">${esc(V.note)}</div>
+
+    <div class="form-row">
+      <div class="form-group"><label>识别协议</label><select id="vc-asr-proto" class="ctl">${voiceProtoOptions(asr.protocol || 'deepseek')}</select></div>
+      <div class="form-group"><label>识别提供商</label><select id="vc-asr-provider" class="ctl">${provOpts(asr.providerId)}</select></div>
+      <div class="form-group"><label>识别模型（可留空）</label><input id="vc-asr-model" class="ctl" value="${esc(asr.modelId || '')}" placeholder="留空用默认"></div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group"><label>合成协议</label><select id="vc-tts-proto" class="ctl" onchange="refreshVoiceOptions()">${voiceProtoOptions(proto)}</select></div>
+      <div class="form-group"><label>合成提供商</label><select id="vc-tts-provider" class="ctl">${provOpts(tts.providerId)}</select></div>
+      <div class="form-group"><label>合成模型（可留空）</label><input id="vc-tts-model" class="ctl" value="${esc(tts.modelId || '')}" placeholder="留空用默认"></div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group"><label>音色</label><select id="vc-tts-voice" class="ctl">${voices.map(v =>
+        `<option value="${esc(v.id)}" ${tts.voice === v.id ? 'selected' : ''}>${esc(v.label)}</option>`).join('')}</select></div>
+      <div class="form-group"><label>默认发送方式</label><select id="vc-send-mode" class="ctl">${modes.map(([v, t]) =>
+        `<option value="${v}" ${mode === v ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+      <div class="form-group"><label>随机概率</label><input id="vc-random" class="ctl" type="number" min="0" max="1" step="0.05" value="${V.cfg.randomRate ?? 0.35}"></div>
+    </div>
+
+    <div class="btn-group">
+      <button class="btn btn-primary" onclick="saveVoice()">保存语音配置</button>
+      <button class="btn" onclick="previewVoice()">试听一句</button>
+      <button class="btn" onclick="fixVoicePermission()">检查微信语音权限</button>
+    </div>
+    <div id="vc-preview" style="margin-top:10px"></div>`;
+}
+
+function refreshVoiceOptions() {
+  const proto = document.getElementById('vc-tts-proto')?.value || 'deepseek';
+  const voices = (V.catalog[proto] || {}).voices || [];
+  const sel = document.getElementById('vc-tts-voice');
+  if (sel) sel.innerHTML = voices.map(v => `<option value="${esc(v.id)}">${esc(v.label)}</option>`).join('');
+}
+
+async function saveVoice() {
+  const patch = {
+    voice: {
+      enabled: true,
+      sendMode: document.getElementById('vc-send-mode').value,
+      randomRate: Number(document.getElementById('vc-random').value) || 0.35,
+      asr: {
+        enabled: true,
+        protocol: document.getElementById('vc-asr-proto').value,
+        providerId: document.getElementById('vc-asr-provider').value,
+        modelId: document.getElementById('vc-asr-model').value.trim(),
+      },
+      tts: {
+        enabled: true,
+        protocol: document.getElementById('vc-tts-proto').value,
+        providerId: document.getElementById('vc-tts-provider').value,
+        modelId: document.getElementById('vc-tts-model').value.trim(),
+        voice: document.getElementById('vc-tts-voice').value,
+        format: 'wav',
+      },
+    },
+  };
+  try {
+    await api('/config', { method: 'POST', body: JSON.stringify(patch) });
+    toast('语音配置已保存', 'success');
+    await Promise.allSettled([loadConfig(), loadVoice()]);
+  } catch (e) { toast('保存失败: ' + e.message, 'error'); }
+}
+
+async function previewVoice() {
+  const box = document.getElementById('vc-preview');
+  box.innerHTML = '<span class="hint">正在合成…</span>';
+  try {
+    const r = await api('/voice/tts', { method: 'POST', body: JSON.stringify({
+      text: '你好，我是灵枢。这是一段语音测试，听到就说明合成正常。',
+      providerId: document.getElementById('vc-tts-provider').value || null,
+      modelId: document.getElementById('vc-tts-model').value.trim() || null,
+      voice: document.getElementById('vc-tts-voice').value || null,
+    }) });
+    const dur = r.durationSeconds ? `${r.durationSeconds.toFixed(1)}s` : '时长未知';
+    box.innerHTML = `<div class="hint" style="margin-bottom:6px">音色 ${esc(r.voice)} · ${dur} · ${(r.bytes / 1024).toFixed(0)}KB</div>
+      <audio controls autoplay src="data:${r.mime};base64,${r.audio}" style="width:100%"></audio>`;
+    toast('合成成功', 'success');
+  } catch (e) {
+    box.innerHTML = `<span class="hint" style="color:var(--red)">合成失败：${esc(e.message)}</span>`;
+  }
+}
+
+async function fixVoicePermission() {
+  const r = await apiSafe('/voice/permission', { method: 'POST', body: '{}' });
+  if (!r) return;
+  toast(r.ok ? (r.changed ? '已写入语音读取权限' : '权限已就绪') : ('失败：' + (r.reason || '未知')), r.ok ? 'success' : 'error');
+}
+
 // ── AI 提供商 ──
 async function loadProviders() {
   const d = await apiSafe('/ai/providers');
@@ -980,7 +1111,8 @@ async function reloadHistory() {
   const box = document.getElementById('messages');
   try {
     const d = await api(`/chat/history?talker=${encodeURIComponent(S.current)}&limit=60`);
-    const msgs = d.messages || [];
+    // 接口返回的是「最新在前」，渲染时要翻过来：最旧的在上、最新的在下
+    const msgs = [...(d.messages || [])].reverse();
     if (!msgs.length) { box.innerHTML = '<div class="empty"><span class="big">📭</span>暂无历史消息</div>'; return; }
     box.innerHTML = msgs.map(m => {
       const out = !!m.isSend;
@@ -1035,12 +1167,18 @@ async function addChat(talker, kind, conversationId, name) {
   } catch (e) { toast('添加失败: ' + e.message, 'error'); }
 }
 
+function voiceOptionsForChat(protocol, cur) {
+  const voices = (V.catalog?.[protocol || 'deepseek'] || {}).voices || [];
+  return voices.map(v => `<option value="${esc(v.id)}" ${cur === v.id ? 'selected' : ''}>${esc(v.label)}</option>`).join('');
+}
+
 async function renderSettings(talker) {
   const box = document.getElementById('chat-settings');
   const c = S.chats.find(x => x.talker === talker);
   if (!c) { box.innerHTML = '<div class="empty"><span class="big">⚙️</span>选择聊天后在这里配置</div>'; return; }
   // 用「生效值」而不是原始覆盖值，避免未设置的项显示成 0/关闭
   const eff = c.settings?.context || {};
+  const effV = c.settings?.voice || {};
   const curPid = c.model?.providerId || '';
   const provModels = S.providers.find(p => p.id === curPid)?.models || [];
   const compressOn = (eff.compressAtTokens ?? 0) !== 0;
@@ -1102,6 +1240,28 @@ async function renderSettings(talker) {
       <label class="checkline"><input type="checkbox" id="cs-memory" ${c.memory?.enabled !== false ? 'checked' : ''}> 为该聊天启用记忆</label>
       <div class="hint dim">开启后会从对话里自动提取事实、打标签、按遗忘曲线管理</div>
     </div>
+    <div class="divider"></div>
+    <div class="form-group">
+      <label class="checkline"><input type="checkbox" id="cs-voice-asr" ${effV.asrEnabled ? 'checked' : ''}> 语音识别（收到语音自动转文字）</label>
+    </div>
+    <div class="form-group">
+      <label>语音发送方式</label>
+      <select id="cs-voice-mode">
+        ${[['off', '不自动发（AI 需要时会主动发）'], ['withText', '文字 + 语音'], ['onlyVoice', '只发语音'], ['random', '随机穿插']].map(([v, t]) =>
+          `<option value="${v}" ${(effV.sendMode || 'off') === v ? 'selected' : ''}>${t}</option>`).join('')}
+      </select>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>该聊天音色</label>
+        <select id="cs-voice-voice">
+          <option value="">跟随全局</option>
+          ${voiceOptionsForChat(effV.tts?.protocol, effV.tts?.voice)}
+        </select>
+      </div>
+      <div class="form-group"><label>随机概率</label><input id="cs-voice-random" type="number" min="0" max="1" step="0.05" value="${effV.randomRate ?? 0.35}"></div>
+    </div>
+    <div class="hint dim">没有配置语音合成时，「语音发送方式」不会生效；AI 仍可用 send_voice 工具主动发语音。</div>
+    <div class="divider"></div>
     <div class="form-group">
       <label class="checkline"><input type="checkbox" id="cs-auto-compress" ${compressOn ? 'checked' : ''}> 自动压缩上下文</label>
       <div class="form-row" style="margin-top:6px">
@@ -1142,6 +1302,12 @@ async function saveChatSettings(talker) {
     persona: document.getElementById('cs-persona').value.trim() || null,
     style: document.getElementById('cs-style').value.trim() || null,
     memory: { enabled: document.getElementById('cs-memory').checked },
+    voice: {
+      asrEnabled: document.getElementById('cs-voice-asr').checked,
+      sendMode: document.getElementById('cs-voice-mode').value,
+      voice: document.getElementById('cs-voice-voice').value || null,
+      randomRate: Number(document.getElementById('cs-voice-random').value) || 0.35,
+    },
     context: {
       compressAtTokens: compressOn ? (Number(document.getElementById('cs-compress-at').value) || 48000) : 0,
       keepRecentMessages: Number(document.getElementById('cs-keep').value) || 14,

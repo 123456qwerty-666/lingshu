@@ -13,7 +13,7 @@ export const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 const SECRETS_DIR = path.join(DATA_DIR, 'secrets');
 
 export const DEFAULT_CONFIG = {
-  app: { name: '灵枢 AI 中枢', version: '0.4.2', port: 17890, bind: '127.0.0.1' },
+  app: { name: '灵枢 AI 中枢', version: '0.5.0', port: 17890, bind: '127.0.0.1' },
   wechat: {
     readerUrl: 'http://127.0.0.1:5031',
     hookUrl: 'http://127.0.0.1:30001',
@@ -67,6 +67,18 @@ export const DEFAULT_CONFIG = {
     compressAtTokens: 48000,     // 超过这个 token 数就滚动压缩
     keepRecentMessages: 14,      // 压缩时保留的最近原文条数
     summaryMaxTokens: 700,
+  },
+  /**
+   * 语音：先语音识别（收），再语音合成（发）
+   * protocol 决定用哪套接口：deepseek = /v1/tools/asr|tts，openai = /v1/audio/*（兼容中转都走这个）
+   */
+  voice: {
+    enabled: true,
+    maxSeconds: 0,               // 0 = 不限制（音频以文件发送，不受微信语音 60 秒限制）
+    sendMode: 'off',             // off | withText | onlyVoice | random
+    randomRate: 0.35,
+    asr: { enabled: true, providerId: '', modelId: '', protocol: 'deepseek' },
+    tts: { enabled: false, providerId: '', modelId: '', protocol: 'deepseek', voice: 'stella', format: 'wav' },
   },
   /**
    * 聊天注册表：talker(sessionId) -> {
