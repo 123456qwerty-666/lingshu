@@ -105,16 +105,41 @@ export function wavInfo(buf) {
   return null;
 }
 
-/** 把 PCM/WAV 裁到指定秒数以内（只处理标准 44 字节头的 WAV） */
+/** 把 WAV 裁到指定秒数以内（按块重建，兼容带 LIST/fact 等额外块的文件） */
 export function trimWav(buf, maxSeconds) {
   const info = wavInfo(buf);
   if (!info || !info.durationSeconds || info.durationSeconds <= maxSeconds) return { buf, info, trimmed: false };
+
+  let fmt = null;
+  let dataOff = -1;
+  let dataLen = 0;
+  let off = 12;
+  while (off + 8 <= buf.length) {
+    const id = buf.toString('ascii', off, off + 4);
+    const size = buf.readUInt32LE(off + 4);
+    const body = off + 8;
+    if (id === 'fmt ') fmt = buf.subarray(body, Math.min(body + size, buf.length));
+    if (id === 'data') { dataOff = body; dataLen = Math.min(size, buf.length - body); break; }
+    off = body + size + (size % 2);
+  }
+  if (!fmt || dataOff < 0) return { buf, info, trimmed: false };
+
   const byteRate = info.sampleRate * info.channels * (info.bitsPerSample / 8);
-  const want = Math.floor(byteRate * maxSeconds);
-  const body = buf.subarray(0, 44 + want);
-  const out = Buffer.from(body);
-  out.writeUInt32LE(36 + want, 4);          // RIFF size
-  out.writeUInt32LE(want, 40);              // data size
+  if (!byteRate) return { buf, info, trimmed: false };
+  const want = Math.min(dataLen, Math.floor(byteRate * maxSeconds));
+
+  const head = Buffer.alloc(20 + fmt.length + 8);
+  head.write('RIFF', 0, 'ascii');
+  head.writeUInt32LE(head.length - 8 + want, 4);
+  head.write('WAVE', 8, 'ascii');
+  head.write('fmt ', 12, 'ascii');
+  head.writeUInt32LE(fmt.length, 16);
+  fmt.copy(head, 20);
+  const dOff = 20 + fmt.length;
+  head.write('data', dOff, 'ascii');
+  head.writeUInt32LE(want, dOff + 4);
+
+  const out = Buffer.concat([head, buf.subarray(dataOff, dataOff + want)]);
   return { buf: out, info: wavInfo(out), trimmed: true };
 }
 
@@ -198,7 +223,7 @@ export async function transcribe(wavBuffer, { config = null, providerId = null, 
   const text = String(
     data.text ?? data.transcript ?? data.result ?? data.data?.text ?? data.choices?.[0]?.message?.content ?? '',
   ).trim();
-  if (!text) throw new Error('语音识别返回了空文本');
+  // 空白音频（太短/没人说话）不算错误，交给调用方决定怎么提示
   return { text, durationMs: data.duration_ms ?? data.durationMs ?? null, provider: provider.id, model };
 }
 
@@ -261,11 +286,34 @@ export async function synthesize(text, { config = null, providerId = null, model
  * reader 的 /api/v1/voices/:id 需要 conversationKey 与 pluginId，
  * 且该 pluginId 必须在 WeChatAgent 的 config/plugins.json 里
  * 处于 enabled 且有 audio_read 权限（见 agent-bridge.mjs）。
+ *
+ * ⚠️ 它返回的不是裸音频，是 JSON 信封：
+ *   { id, conversationKey, b64, sha256, mime, filename, sampleRate, durationSeconds }
+ * 直接把这段 JSON 当 wav 交给 ASR，会报 "Unsupported audio format"。
  */
 export async function fetchVoiceWav(reader, voiceId, conversationKey, pluginId, { format = 'wav' } = {}) {
   if (!reader) throw new Error('微信读取器未初始化');
   const qs = new URLSearchParams({ conversationKey, pluginId, format });
-  return reader.fetchBinary(`/api/v1/voices/${encodeURIComponent(voiceId)}?${qs}`, { timeoutMs: 40000 });
+  const raw = await reader.fetchBinary(`/api/v1/voices/${encodeURIComponent(voiceId)}?${qs}`, { timeoutMs: 40000 });
+
+  if (raw?.length && raw[0] === 0x7b) {          // '{' → JSON 信封
+    let j = null;
+    try { j = JSON.parse(raw.toString('utf8')); } catch { j = null; }
+    if (j) {
+      const b64 = j.b64 || j.audio || j.data;
+      if (typeof b64 === 'string' && b64.length > 64) {
+        return {
+          buffer: Buffer.from(b64, 'base64'),
+          mime: j.mime || 'audio/wav',
+          durationSeconds: j.durationSeconds ?? null,
+          sampleRate: j.sampleRate ?? null,
+        };
+      }
+      throw new Error(j.error || '语音接口没有返回音频数据');
+    }
+  }
+  if (!raw?.length) throw new Error('语音接口返回空数据');
+  return { buffer: raw, mime: 'audio/wav', durationSeconds: null, sampleRate: null };
 }
 
 /** 把音频落到 data/media/pending-send，返回绝对路径 */

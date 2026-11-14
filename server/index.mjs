@@ -144,6 +144,42 @@ const processing = new Set(); // talker 级别串行，避免同一聊天并发�
 let audioPermissionReady = false;   // 是否已向 WeChatAgent 登记语音读取权限
 const seenRawids = new Map(); // rawid -> ts，SSE 重推 / 图片重试去重
 
+/**
+ * 微信库里「我们自己发出去的文字」经常读不到正文（parsedContent 变成
+ * 「[未识别的消息类型 1]」）。灵枢自己存了原文，按时间补回去。
+ */
+function mergeContextText(messages, talker) {
+  let ctx = [];
+  try {
+    ctx = new ChatContext(talker).getMessages(200)
+      .filter(m => typeof m.content === 'string' && m.content.trim())
+      .map(m => ({ role: m.role, text: m.content, ts: Number(m.ts) || 0 }));
+  } catch { return messages; }
+  if (!ctx.length) return messages;
+
+  const used = new Set();
+  return messages.map(m => {
+    if (!m.isSend) return m;
+    const shown = String(m.content || '');
+    const parsed = String(m.parsedContent || '');
+    const bad = !shown.trim()
+      || /^\[未识别的消息类型|^\[非文本/.test(shown)
+      || /^\[未识别的消息类型|^\[非文本/.test(parsed);
+    if (!bad) return m;
+    const ts = Number(m.createTime) * 1000;
+    let best = -1;
+    let diff = Infinity;
+    ctx.forEach((c, i) => {
+      if (used.has(i) || c.role !== 'assistant') return;
+      const d = Math.abs(c.ts - ts);
+      if (d < diff && d <= 8000) { diff = d; best = i; }
+    });
+    if (best < 0) return m;
+    used.add(best);
+    return { ...m, content: ctx[best].text, parsedContent: ctx[best].text };
+  });
+}
+
 async function handleIncoming(event, { source = 'sse' } = {}) {
   const config = await loadConfig();
   const msg = router.parseEvent(event, { ownWxid: config.wechat.ownWxid || getState().ownWxid });
@@ -216,7 +252,9 @@ async function processMessage(msg, config) {
   // ── 语音：先转成文字，后面全部按普通文本处理 ──
   const voiceCfg = voiceConfig(config, msg.talker);
   if (msg.contentType === 34) {
-    const looksEmpty = !msg.text || /^\s*\[?语音\]?\s*$/.test(msg.text);
+    // 读取器给的占位文案有几种："[语音]"、"[语音，尚未转写]" 等
+    const rawText = String(msg.text || '').trim();
+    const isPlaceholder = !rawText || /^[\[【]?\s*语音/.test(rawText);
     if (msg.voice?.id && voiceCfg.asrEnabled && voiceCfg.asrConfigured) {
       try {
         if (!audioPermissionReady) {
@@ -226,29 +264,37 @@ async function processMessage(msg, config) {
           else if (p.changed) log('已向 WeChatAgent 登记语音读取权限（lingshu / audio_read）');
         }
         const key = conversationKeyOf(msg.kind, msg.conversationId);
-        const wav = await fetchVoiceWav(getReader(), msg.voice.id, key, AUDIO_PLUGIN_ID);
-        const { buf, info, trimmed } = trimWav(wav, 120);
-        if (trimmed) log(`语音超过 120 秒，已截断后识别（${info?.durationSeconds}s）`, 'warn');
+        const got = await fetchVoiceWav(getReader(), msg.voice.id, key, AUDIO_PLUGIN_ID);
+        const { buf, info, trimmed } = trimWav(got.buffer, 120);
+        if (trimmed) log(`语音超过 120 秒，已截断后识别（${got.durationSeconds || info?.durationSeconds}s）`, 'warn');
         // 留底给控制台播放
         try {
           const cacheFile = saveToCache(buf, { ext: 'wav', tag: 'voice-in' });
           recordMedia(msg.talker, {
             dir: 'in', kind: 'voice', file: cacheFile,
             ts: msg.timestamp || Date.now(),
-            duration: msg.voice.durationSeconds || info?.durationSeconds || null,
+            duration: msg.voice.durationSeconds || got.durationSeconds || info?.durationSeconds || null,
           });
         } catch { /* ignore */ }
         const r = await transcribe(buf, { config, onLog: (m) => log(m, 'debug') });
-        msg.text = `[语音 ${Math.round(msg.voice.durationSeconds || info?.durationSeconds || 0)}s] ${r.text}`;
-        log(`语音转文字：${r.text.slice(0, 50)}`);
+        const durSec = Math.round(msg.voice.durationSeconds || got.durationSeconds || info?.durationSeconds || 0);
+        if (r.text) {
+          msg.text = `[语音 ${durSec}s] ${r.text}`;
+          log(`语音转文字：${r.text.slice(0, 50)}`);
+        } else {
+          msg.text = `[对方发来一条 ${durSec}s 的语音，但没听清内容（可能是空白或太短），可以请对方再说一遍]`;
+          log(`语音 ${durSec}s 转写为空（太短或静音）`, 'warn');
+        }
       } catch (e) {
         log(`语音转文字失败: ${e.message}`, 'warn');
-        if (looksEmpty) msg.text = '[收到一条语音，但转写失败了]';
+        if (isPlaceholder) {
+          msg.text = '[对方发来一条语音，但本地转写失败了；可以礼貌地请对方再发一次或直接打字]';
+        }
       }
-    } else if (looksEmpty) {
+    } else if (isPlaceholder) {
       msg.text = voiceCfg.asrEnabled
-        ? '[收到一条语音，但还没配置语音识别模型]'
-        : '[收到一条语音（该聊天未开启语音识别）]';
+        ? '[对方发来一条语音，但还没配置语音识别模型，请提示用户去「AI 配置 → 语音」里配一下]'
+        : '[对方发来一条语音（该聊天未开启语音识别）]';
     }
   }
 
@@ -891,7 +937,8 @@ async function route(req, res) {
     try {
       const msgs = await getChatHistory(talker, limit);
       const { messages, orphans } = mergeMediaIntoMessages(msgs, talker);
-      const all = [...messages, ...orphans].sort((a, b) => (a.createTime || 0) - (b.createTime || 0));
+      const withText = mergeContextText(messages, talker);
+      const all = [...withText, ...orphans].sort((a, b) => (a.createTime || 0) - (b.createTime || 0));
       sendJson(res, 200, { messages: all, withMedia: true });
     } catch (e) { sendJson(res, 500, { error: e.message }); }
     return;
