@@ -181,6 +181,9 @@ export class MessageRouter {
       voice: event.voice || null,
       quote: event.quoteReply || null,
       forwarded: event.forwardedRecord || null,
+      platform: event.platform || 'wechat',
+      qqTarget: event.qqTarget || '',
+      qqMedia: event.qqMedia || [],
       isOutgoing,
       timestamp: ts,
       raw: event,
@@ -274,7 +277,9 @@ export class MessageRouter {
       // 注意：绝对不要给 assistant 的历史回复加 —— 模型看到自己以前的输出都带时间，
       // 就会学着在结尾也附一个时间（实测确实会）。
       const stamp = withTime && m.ts && m.role === 'user' ? messageStamp(m.ts) : '';
-      messages.push({ role: m.role, content: content + stamp });
+      // 聊天室里从另一端镜像过来的消息，标清来源，AI 才知道「这条是微信发的」
+      const origin = m.fromPlatform && m.mirrored ? `[用户在${m.fromPlatform}中给你发] ` : '';
+      messages.push({ role: m.role, content: origin + content + stamp });
     }
 
     const parts = [];

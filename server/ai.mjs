@@ -73,14 +73,23 @@ export class AIClient {
     push(preferredId || cfg.ai.defaultProvider);
     for (const id of cfg.ai.fallbackProviders || []) push(id);
     if (this._lastGood) push(this._lastGood);
-    for (const id of Object.keys(cfg.ai.providers || {})) push(id);
+    for (const id of Object.keys(cfg.ai.providers || {})) {
+      // 纯语音/音频提供商（如自建 CosyVoice）不能当对话模型用
+      if (cfg.ai.providers[id]?.voiceOnly) continue;
+      push(id);
+    }
 
     const chain = [];
     for (const id of ordered) {
       try {
         const p = await this.getProvider(id);
         const isPrimary = id === (preferredId || cfg.ai.defaultProvider);
-        const model = (isPrimary && (preferredModel || cfg.ai.defaultModel)) || this.chatModelOf(p);
+        // 注意：cfg.ai.defaultModel 属于「默认提供商」，跨提供商套用会 400。
+        // 只有当前就是默认提供商时才用它，否则退回该提供商自己的模型列表。
+        const sameAsDefault = id === cfg.ai.defaultProvider;
+        const model = (isPrimary && preferredModel)
+          || (sameAsDefault ? cfg.ai.defaultModel : '')
+          || this.chatModelOf(p);
         chain.push({ ...p, model });
       } catch (e) {
         onLog?.(`提供商 ${id} 跳过：${e.message}`, 'debug');

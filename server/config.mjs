@@ -68,6 +68,35 @@ export const DEFAULT_CONFIG = {
     keepRecentMessages: 14,      // 压缩时保留的最近原文条数
     summaryMaxTokens: 700,
   },
+  /** QQ 通道（NapCatQQ / OneBot 11，用个人 QQ 号登录） */
+  qq: {
+    enabled: false,
+    httpUrl: 'http://127.0.0.1:3001',   // NapCat 的 HTTP 服务端
+    token: '',
+    selfUin: 0,
+    ffmpegPath: 'C:/Users/666/Desktop/AI/AstrBot/ffmpeg.exe',
+    silkWasmPath: 'C:/Users/666/Desktop/接入微信/WeChatAgent-install/data/workspace/packages/voice-codec/silk-wasm/lib/index.mjs',
+    autoSticker: true,                  // 收到表情包时允许自动回表情
+    autoImage: true,
+    aiActions: { enabled: true, allowHighRisk: false },  // AI 能否自主操作 QQ；高风险（换头像/发动态/踢人）需单独开
+    proactive: {
+      enabled: false,
+      // 允许主动发消息的时间段；空数组 = 全天。支持跨午夜（22:00-02:00）
+      windows: [{ start: '09:00', end: '12:00' }, { start: '14:00', end: '22:00' }],
+      intervalMin: 40,        // 两次「发一会儿」之间，最少隔多少分钟
+      intervalMax: 120,       // 最多隔多少分钟（两者之间随机）
+      burstMin: 1,            // 每次「发一会儿」发几条
+      burstMax: 3,
+      gapMin: 4,              // 这一串里每两条之间隔几秒
+      gapMax: 15,
+      idleMinutes: 120,       // 对方多久没说话才算「没人」
+      maxPerDay: 3,
+      quietHours: [23, 8],
+      targets: [],
+      aiGenerated: true,      // 让 AI 按记忆生成内容（关掉则用下面的预设句）
+      lines: ['在吗？好久没聊了～', '刚想到你，来打个招呼', '今天怎么样呀？'],
+    },
+  },
   /**
    * 语音：先语音识别（收），再语音合成（发）
    * protocol 决定用哪套接口：deepseek = /v1/tools/asr|tts，openai = /v1/audio/*（兼容中转都走这个）
@@ -79,6 +108,10 @@ export const DEFAULT_CONFIG = {
     randomRate: 0.35,
     asr: { enabled: true, providerId: '', modelId: '', protocol: 'deepseek' },
     tts: { enabled: false, providerId: '', modelId: '', protocol: 'deepseek', voice: 'stella', format: 'wav' },
+    // 豆包专用：情绪 / 情绪强度 / 语速
+    emotion: '',
+    emotionScale: 4,
+    speed: 1,
   },
   /**
    * 聊天注册表：talker(sessionId) -> {

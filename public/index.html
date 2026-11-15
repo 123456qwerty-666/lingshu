@@ -157,7 +157,10 @@ input.ctl,select.ctl,textarea.ctl{width:100%;padding:8px 11px;background:var(--s
 .input-area.dual{flex-wrap:wrap;align-items:center}
 .io-cell{display:flex;align-items:center;gap:6px;flex:1 1 220px;min-width:0}
 .io-tag{flex:0 0 auto;font-size:11px;padding:2px 6px;border-radius:6px;background:var(--surface3);color:var(--text2);white-space:nowrap;cursor:help}
-.io-tag.ai{background:color-mix(in srgb,var(--accent) 22%,transparent);color:var(--accent2)}
+.io-tag.ai{background:rgba(90,169,255,.22);color:var(--accent2)}
+.zone-tabs{display:flex;align-items:center;gap:8px;margin-bottom:10px;padding:6px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface)}
+.zone-tab{padding:8px 18px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface2);color:var(--text2);font-size:13px;cursor:pointer}
+.zone-tab.active{background:var(--accent);color:#fff;border-color:var(--accent)}
 
 .empty{text-align:center;padding:34px 18px;color:var(--text3);font-size:13px;line-height:1.8}
 .empty .big{font-size:26px;display:block;margin-bottom:6px;opacity:.5}
@@ -294,6 +297,49 @@ input.ctl,select.ctl,textarea.ctl{width:100%;padding:8px 11px;background:var(--s
 
       <!-- 聊天 -->
       <div class="section" id="page-chats">
+        <div class="zone-tabs">
+          <button class="zone-tab active" id="zone-tab-wx" onclick="switchZone('wx')">💬 微信专区</button>
+          <button class="zone-tab" id="zone-tab-qq" onclick="switchZone('qq')">🐧 QQ 专区</button>
+          <button class="btn btn-sm btn-primary" onclick="openPoolPanel()" style="margin-left:8px">🔗 同步会话</button>
+          <span class="hint dim" id="pool-count" style="margin-left:2px"></span>
+          <span class="hint dim" id="zone-hint" style="margin-left:auto"></span>
+        </div>
+
+        <!-- 同步会话 / 聊天池 -->
+        <div id="pool-panel" class="card" style="display:none;margin-bottom:12px">
+          <h3>🔗 同步会话 · 聊天池</h3>
+          <div class="hint dim" style="margin-bottom:10px">
+            选两个会话建立聊天池。同步后两边共用同一套设置、记忆和对话历史；任意一边改动都会实时同步到另一边。
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label>会话 A</label><select id="pool-a" class="ctl"></select></div>
+            <div class="form-group"><label>会话 B</label><select id="pool-b" class="ctl"></select></div>
+          </div>
+          <div class="hint dim" style="margin:-4px 0 10px">
+            <span id="pool-avail"></span>
+            <a href="#" onclick="poolReloadChats();return false" style="margin-left:8px">刷新列表</a>
+          </div>
+          <div class="form-group"><label>同步方向</label>
+            <select id="pool-dir" class="ctl">
+              <option value="a2b" selected>把 A 的全部数据同步到 B（会先清空 B 的聊天记录和记忆）</option>
+              <option value="b2a">把 B 的全部数据同步到 A（会先清空 A 的聊天记录和记忆）</option>
+              <option value="merge">双向合并（不清空，只把缺的补上）</option>
+            </select></div>
+          <div class="form-group">
+            <label class="checkline"><input type="checkbox" id="pool-wipe" checked>
+              <span>覆盖前清空目标会话的聊天记录与记忆（推荐，避免旧数据混进来）</span></label>
+          </div>
+          <div class="btn-group">
+            <button class="btn btn-primary btn-sm" onclick="createPool()">建立聊天池</button>
+            <button class="btn btn-sm btn-ghost" onclick="closePoolPanel()">收起</button>
+          </div>
+          <div style="margin-top:14px">
+            <div class="hint dim" style="margin-bottom:6px">已同步列表</div>
+            <div id="pool-list"></div>
+          </div>
+        </div>
+
+        <div id="wx-zone">
         <div class="split">
           <div class="col col-left">
             <div class="search-box">
@@ -327,11 +373,175 @@ input.ctl,select.ctl,textarea.ctl{width:100%;padding:8px 11px;background:var(--s
             <div class="empty"><span class="big">⚙️</span>选择聊天后在这里配置</div>
           </div>
         </div>
+        </div><!-- /wx-zone -->
+
+        <div id="qq-zone" style="display:none">
+          <div class="split">
+            <div class="col col-left">
+              <div class="card" style="margin:10px">
+                <h3>连接状态</h3>
+                <div id="qq-status" class="hint">未检测</div>
+                <div class="btn-group" style="margin-top:8px">
+                  <button class="btn btn-sm" onclick="loadQQ()">刷新状态</button>
+                  <button class="btn btn-sm" onclick="qqTestVoice()">试发语音</button>
+                </div>
+              </div>
+              <div class="col-head"><span class="t">QQ 好友 / 群</span><span class="tag" id="qq-chat-count">0</span></div>
+              <div class="list" id="qq-chat-list"></div>
+            </div>
+            <div class="col col-mid">
+              <div class="col-head"><span class="t" id="qq-chat-title">未选择 QQ 会话</span>
+                <span class="btn-group">
+                  <button class="btn btn-sm btn-ghost" onclick="qqJoinRoom()" title="用当前会话建立或加入聊天池">加进聊天池</button>
+                  <button class="btn btn-sm btn-ghost" onclick="qqAddTarget()" title="把这个会话加入主动消息目标">设为主动目标</button>
+                </span></div>
+              <div class="messages" id="qq-messages">
+                <div class="empty"><span class="big">🐧</span>先在左侧选一个 QQ 好友或群</div>
+              </div>
+              <div class="input-area dual">
+                <div class="io-cell">
+                  <span class="io-tag">→ 对方</span>
+                  <input id="qq-input" placeholder="发文字给 QQ…" onkeydown="if(event.key==='Enter')qqSendText()">
+                  <button class="btn btn-sm" onclick="qqSendText()">发送</button>
+                </div>
+                <div class="io-cell">
+                  <input id="qq-image-file" type="file" accept="image/*" style="display:none" onchange="qqSendImage(this)">
+                  <button class="btn btn-sm" onclick="document.getElementById('qq-image-file').click()">图片</button>
+                  <button class="btn btn-sm" onclick="qqSendVoice()">语音</button>
+                  <button class="btn btn-sm" onclick="qqSendFace()">表情</button>
+                </div>
+              </div>
+            </div>
+            <div class="col col-right" style="padding:10px;overflow:auto">
+              <div id="qq-chat-settings" style="display:none"></div>
+              <div id="qq-channel-panel">
+              <div class="btn-group" style="margin-bottom:8px">
+                <button class="btn btn-sm btn-primary" onclick="qqShowChatSettings()">该聊天设置</button>
+                <button class="btn btn-sm btn-ghost" onclick="qqShowChannelPanel()">通道设置</button>
+              </div>
+              <div class="card">
+                <h3>QQ 通道设置</h3>
+                <div class="form-group"><label class="checkline"><input type="checkbox" id="qq-enabled"> 启用 QQ 通道</label></div>
+                <div class="form-group"><label>NapCat HTTP 地址</label><input id="qq-http" class="ctl" placeholder="http://127.0.0.1:3001"></div>
+                <div class="form-group"><label>Access Token（可留空）</label><input id="qq-token" class="ctl" placeholder="OneBot token"></div>
+                <div class="form-group"><label>ffmpeg 路径</label><input id="qq-ffmpeg" class="ctl" placeholder="ffmpeg.exe"></div>
+                <div class="hint dim" style="margin:6px 0">NapCat 事件上报填 <code>http://127.0.0.1:17890/api/qq/event</code>，消息格式选 Array。</div>
+                <button class="btn btn-primary" onclick="saveQQConfig()">保存设置</button>
+              </div>
+              <div class="card">
+                <h3>⏱ 主动消息</h3>
+                <div class="form-group"><label class="checkline"><input type="checkbox" id="qq-proactive"> 在选定时间段内自动发消息</label></div>
+                <div class="form-group">
+                  <label>时间段（在这几段里随机发，留空 = 全天）</label>
+                  <div id="qq-windows"></div>
+                  <button class="btn btn-sm btn-ghost" onclick="qqAddWindow()" style="margin-top:6px">+ 加一个时间段</button>
+                  <div class="hint dim" style="margin-top:4px">支持跨午夜，比如 22:00 → 02:00</div>
+                </div>
+                <div class="form-row">
+                  <div class="form-group"><label>隔多久发一次（分钟）</label>
+                    <div style="display:flex;gap:6px;align-items:center">
+                      <input id="qq-iv-min" class="ctl" type="number" min="1" value="40" style="width:70px">
+                      <span class="hint">~</span>
+                      <input id="qq-iv-max" class="ctl" type="number" min="1" value="120" style="width:70px">
+                      <span class="hint">随机</span>
+                    </div></div>
+                  <div class="form-group"><label>每次发几条</label>
+                    <div style="display:flex;gap:6px;align-items:center">
+                      <input id="qq-burst-min" class="ctl" type="number" min="1" value="1" style="width:60px">
+                      <span class="hint">~</span>
+                      <input id="qq-burst-max" class="ctl" type="number" min="1" value="3" style="width:60px">
+                    </div></div>
+                </div>
+                <div class="form-row">
+                  <div class="form-group"><label>这一串里间隔（秒）</label>
+                    <div style="display:flex;gap:6px;align-items:center">
+                      <input id="qq-gap-min" class="ctl" type="number" min="1" value="4" style="width:60px">
+                      <span class="hint">~</span>
+                      <input id="qq-gap-max" class="ctl" type="number" min="1" value="15" style="width:60px">
+                    </div></div>
+                  <div class="form-group"><label>对方静默多久才发（分钟）</label><input id="qq-idle" class="ctl" type="number" value="120"></div>
+                </div>
+                <div class="form-row">
+                  <div class="form-group"><label>每天最多几条</label><input id="qq-maxday" class="ctl" type="number" value="3"></div>
+                  <div class="form-group"><label>内容</label>
+                    <select id="qq-ai-line" class="ctl">
+                      <option value="1">AI 按记忆生成（更像真人）</option>
+                      <option value="0">用预设句子</option>
+                    </select></div>
+                </div>
+                <div class="btn-group">
+                  <button class="btn btn-primary btn-sm" onclick="saveQQProactive()">保存</button>
+                  <button class="btn btn-sm" onclick="qqProactiveTick()">立即试跑一轮</button>
+                </div>
+                <div class="hint dim" style="margin-top:6px">安静时段默认 23:00–08:00 不发。目标会话在下方「QQ 好友 / 群」里选中后点「设为主动目标」。</div>
+                <div id="qq-targets" style="margin-top:6px"></div>
+              </div>
+              <div class="card">
+                <h3>⏰ 定时发送</h3>
+                <div class="form-group"><label>目标</label><select id="qq-sch-target" class="ctl"></select></div>
+                <div class="form-group"><label>内容</label><input id="qq-sch-text" class="ctl" placeholder="要发的话"></div>
+                <div class="form-group"><label>每隔几分钟（0 = 只发一次）</label><input id="qq-sch-every" class="ctl" type="number" value="0"></div>
+                <button class="btn btn-sm btn-primary" onclick="qqAddSchedule()">添加定时</button>
+                <div id="qq-sch-list" style="margin-top:8px"></div>
+              </div>
+              <div class="card">
+                <h3>🤖 AI 自主操作</h3>
+                <div class="form-group"><label class="checkline"><input type="checkbox" id="qq-ai-enabled" checked> 允许 AI 自主操作 QQ</label></div>
+                <div class="form-group"><label class="checkline"><input type="checkbox" id="qq-ai-risk"> 允许高风险动作（换头像 / 发空间 / 踢人）</label></div>
+                <div class="hint dim">AI 可用：发消息、点赞、改签名、改群名片、看空间等。高风险默认是关的，开了才会放行。</div>
+                <button class="btn btn-sm" onclick="qqSaveAiActions()">保存</button>
+              </div>
+              <div class="card">
+                <h3>🐧 QQ 专属操作</h3>
+                <div class="hint dim" style="margin-bottom:8px">这些是 QQ 独有的（微信没有），可以直接手动执行；AI 那边也有对应工具。</div>
+                <div class="form-group"><label>换头像</label>
+                  <div class="chips">
+                    <input type="file" id="qq-avatar-file" accept="image/*" class="ctl" style="flex:1">
+                    <button class="btn btn-sm btn-primary" onclick="qqSetAvatar()">上传并更换</button>
+                  </div>
+                </div>
+                <div class="form-group"><label>个性签名</label>
+                  <div class="chips">
+                    <input id="qq-longnick" class="ctl" placeholder="一句话签名" style="flex:1">
+                    <button class="btn btn-sm" onclick="qqSetLongNick()">保存</button>
+                  </div>
+                </div>
+                <div class="form-group"><label>给好友点赞</label>
+                  <div class="chips">
+                    <input id="qq-like-uin" class="ctl" placeholder="好友 QQ 号" style="flex:1">
+                    <button class="btn btn-sm" onclick="qqSendLike()">点赞 ×10</button>
+                  </div>
+                </div>
+                <div class="form-group"><label>QQ 空间</label>
+                  <div class="chips">
+                    <button class="btn btn-sm" onclick="qqQzoneFeeds()">读取动态</button>
+                    <span class="hint dim">发动态 NapCat 协议端不支持</span>
+                  </div>
+                  <div id="qq-qzone-out" class="hint dim" style="margin-top:6px"></div>
+                </div>
+                <div class="form-group"><label>群操作</label>
+                  <div class="chips">
+                    <input id="qq-group-id" class="ctl" placeholder="群号" style="width:130px">
+                    <input id="qq-group-card" class="ctl" placeholder="我的群名片" style="flex:1">
+                    <button class="btn btn-sm" onclick="qqSetGroupCard()">改名片</button>
+                  </div>
+                </div>
+                <div id="qq-extra-out" class="hint dim"></div>
+              </div>
+              </div><!-- /qq-channel-panel -->
+            </div>
+          </div>
+        </div><!-- /qq-zone -->
       </div>
 
       <!-- 记忆 -->
       <div class="section" id="page-memory">
         <h2 class="section-title">记忆<span class="hint">自动打标签 · 遗忘曲线 · 群成员专属记忆</span></h2>
+        <div class="zone-tabs">
+          <button class="zone-tab active" id="mem-tab-wx" onclick="switchMemZone('wx')">💬 微信</button>
+          <button class="zone-tab" id="mem-tab-qq" onclick="switchMemZone('qq')">🐧 QQ</button>
+          <span class="hint dim" id="mem-zone-hint" style="margin-left:auto"></span>
+        </div>
         <div class="card-grid" style="margin-bottom:14px">
           <div class="card stat"><div class="k">🧠 记忆总量</div><div class="v" id="mem-total">0</div><div class="s" id="mem-total-sub">会话 + 成员</div></div>
           <div class="card stat yellow"><div class="k">📉 即将遗忘</div><div class="v" id="mem-fading">0</div><div class="s">记忆强度已跌破 40%</div></div>
@@ -541,7 +751,8 @@ input.ctl,select.ctl,textarea.ctl{width:100%;padding:8px 11px;background:var(--s
 <script>
 const S = {
   config: null, chats: [], providers: [], plugins: [], personas: [], health: null,
-  current: null, streamOn: false, streamCtrl: null,
+  current: null, streamOn: false, streamCtrl: null, editEngine: null, zone: 'wx', qq: { chats: [], target: '' },
+  qqChats: [], settingsBox: 'chat-settings',
 };
 const LOGS = [];        // 全量日志缓冲（实时流在这里追加）
 const LOG_MAX = 500;
@@ -849,7 +1060,7 @@ async function applyPersonaToChat(talker) {
 }
 
 // ── 语音 ──
-const V = { catalog: null, cfg: null, providers: [], note: '' };
+const V = { catalog: null, cfg: null, providers: [], note: '', emotions: [], official: [], cloned: [] };
 
 async function loadVoice() {
   const d = await apiSafe('/voice/catalog');
@@ -858,6 +1069,7 @@ async function loadVoice() {
   V.cfg = d.config || {};
   V.providers = d.providers || [];
   V.note = d.note || '';
+  V.emotions = d.emotions || [];
   renderVoiceCard();
 }
 
@@ -903,25 +1115,139 @@ function renderVoiceCard() {
 
     <div class="form-row">
       <div class="form-group"><label>音色</label><select id="vc-tts-voice" class="ctl">${voices.map(v =>
-        `<option value="${esc(v.id)}" ${tts.voice === v.id ? 'selected' : ''}>${esc(v.label)}</option>`).join('')}</select></div>
+        `<option value="${esc(v.id)}" ${tts.voice === v.id ? 'selected' : ''}>${esc(v.label)}</option>`).join('')}</select>
+        ${proto === 'doubao' ? '<div class="hint dim" id="vc-voice-hint" style="margin-top:4px"></div>' : ''}</div>
       <div class="form-group"><label>默认发送方式</label><select id="vc-send-mode" class="ctl">${modes.map(([v, t]) =>
         `<option value="${v}" ${mode === v ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
       <div class="form-group"><label>随机概率</label><input id="vc-random" class="ctl" type="number" min="0" max="1" step="0.05" value="${V.cfg.randomRate ?? 0.35}"></div>
     </div>
 
+    ${proto === 'doubao' ? `
+    <div class="form-row">
+      <div class="form-group"><label>默认情绪</label>
+        <select id="vc-emotion" class="ctl"><option value="">不指定（平调）</option>
+          ${(V.emotions || []).map(e => `<option value="${esc(e.id)}" ${V.cfg.emotion === e.id ? 'selected' : ''}>${esc(e.label)}（${esc(e.id)}）</option>`).join('')}
+        </select></div>
+      <div class="form-group"><label>情绪强度 1~5</label><input id="vc-emotion-scale" class="ctl" type="number" min="1" max="5" value="${V.cfg.emotionScale ?? 4}"></div>
+      <div class="form-group"><label>语速</label><input id="vc-speed" class="ctl" type="number" min="0.2" max="3" step="0.1" value="${V.cfg.speed ?? 1}"></div>
+    </div>
+    <div class="divider"></div>
+    <h4 style="margin:4px 0 8px;font-size:13px">🎙 语音复刻 2.0</h4>
+    <div class="hint dim" style="margin-bottom:8px">上传 5~15 秒干净人声，填「音频里说的原话」；或在豆包官网克隆好后直接填 ID。情绪由 AI 在每句后面打 [开心] 这类标签，不用手动选。</div>
+    <div class="form-row">
+      <div class="form-group"><label>名字</label><input id="vc-clone-name" class="ctl" placeholder="如：威龙"></div>
+      <div class="form-group"><label>原话</label><input id="vc-clone-text" class="ctl" placeholder="一字不差"></div>
+      <div class="form-group"><label>参考音频</label><input id="vc-clone-file" class="ctl" type="file" accept="audio/*"></div>
+    </div>
+    <div class="btn-group">
+      <button class="btn btn-primary" id="vc-clone-btn" onclick="doubaoClone()">上传并复刻</button>
+      <button class="btn" onclick="doubaoAddManual()">手动添加音色 ID</button>
+      <button class="btn" onclick="loadSpeakers(true)">刷新音色列表</button>
+    </div>
+    <div id="vc-clone-list" style="margin-top:10px"></div>
+    ` : ''}
+
     <div class="btn-group">
       <button class="btn btn-primary" onclick="saveVoice()">保存语音配置</button>
       <button class="btn" onclick="previewVoice()">试听一句</button>
       <button class="btn" onclick="fixVoicePermission()">检查微信语音权限</button>
+      ${proto === 'doubao' ? '<button class="btn" onclick="setupDoubao()">一键接入豆包</button>' : ''}
     </div>
     <div id="vc-preview" style="margin-top:10px"></div>`;
+
+  if (proto === 'doubao') setTimeout(() => loadSpeakers(false), 0);
+}
+
+function speakerGroups(official, cloned, cur) {
+  const opt = s => `<option value="${esc(s.id)}" ${cur === s.id ? 'selected' : ''}>${esc(s.name)}</option>`;
+  const g1 = `<optgroup label="官方音色（${official.length}）">${official.map(opt).join('')}</optgroup>`;
+  const g2 = cloned.length
+    ? `<optgroup label="我的克隆音色（${cloned.length}）">${cloned.map(opt).join('')}</optgroup>`
+    : '<optgroup label="我的克隆音色（0）"><option value="" disabled>还没有克隆音色</option></optgroup>';
+  return g1 + g2;
+}
+
+async function loadSpeakers(manual = false) {
+  const d = await apiSafe('/voice/doubao/speakers');
+  if (!d) return;
+  V.official = d.official || [];
+  V.cloned = d.cloned || [];
+  const sel = document.getElementById('vc-tts-voice');
+  if (sel) {
+    const cur = sel.value || V.cfg.tts?.voice || '';
+    sel.innerHTML = speakerGroups(V.official, V.cloned, cur);
+    if (cur && [...V.official, ...V.cloned].some(s => s.id === cur)) sel.value = cur;
+  }
+  const hint = document.getElementById('vc-voice-hint');
+  if (hint) hint.textContent = `官方 ${V.official.length} 个 · 已克隆 ${V.cloned.length} 个`;
+  const list = document.getElementById('vc-clone-list');
+  if (list) list.innerHTML = V.cloned.length
+    ? `<div class="hint dim" style="margin-bottom:6px">我的克隆音色</div>` + V.cloned.map(s =>
+        `<div class="chips" style="margin-bottom:6px"><span class="tag tag-purple">🎙 ${esc(s.name)}</span>
+         <span class="hint dim">${esc(s.id)}</span>
+         <button class="btn btn-sm btn-ghost" onclick="doubaoDelete('${esc(s.id)}')">移除</button></div>`).join('')
+    : '<div class="hint dim">还没有克隆音色</div>';
+  if (manual) toast('音色列表已刷新', 'success');
+}
+
+async function setupDoubao() {
+  const key = prompt('豆包 API Key（只存本机 data/，不会上传）');
+  if (!key) return;
+  try {
+    await api('/voice/doubao/provider', { method: 'POST', body: JSON.stringify({ apiKey: key.trim() }) });
+    toast('已接入豆包', 'success');
+    await Promise.allSettled([loadConfig(), loadVoice()]);
+  } catch (e) { toast('接入失败: ' + e.message, 'error'); }
+}
+
+async function doubaoAddManual() {
+  const id = prompt('粘贴豆包官网克隆好的音色 ID（形如 S_xxxxxxxx）');
+  if (!id) return;
+  const name = prompt('给它起个名字');
+  if (!name) return;
+  try {
+    await api('/voice/doubao/speakers', { method: 'POST', body: JSON.stringify({ id: id.trim(), name: name.trim(), kind: 'clone' }) });
+    toast(`已添加「${name.trim()}」`, 'success');
+    await loadSpeakers(true);
+  } catch (e) { toast('添加失败: ' + e.message, 'error'); }
+}
+
+async function doubaoClone() {
+  const name = document.getElementById('vc-clone-name').value.trim();
+  const text = document.getElementById('vc-clone-text').value.trim();
+  const file = document.getElementById('vc-clone-file').files[0];
+  if (!name || !text || !file) { toast('名字、原话、音频都要填', 'error'); return; }
+  const btn = document.getElementById('vc-clone-btn');
+  btn.disabled = true; btn.textContent = '复刻中…';
+  try {
+    const b64 = await new Promise((res, rej) => {
+      const fr = new FileReader();
+      fr.onload = () => res(String(fr.result).split(',')[1] || '');
+      fr.onerror = () => rej(new Error('读取音频失败'));
+      fr.readAsDataURL(file);
+    });
+    toast('上传并训练中，通常 1~2 分钟…', 'info');
+    const r = await api('/voice/doubao/clone', {
+      method: 'POST', body: JSON.stringify({ name, text, audioBase64: b64, filename: file.name }),
+    });
+    toast(`「${r.name}」复刻完成`, 'success');
+    await loadSpeakers(true);
+  } catch (e) { toast('复刻失败: ' + e.message, 'error'); }
+  finally { btn.disabled = false; btn.textContent = '上传并复刻'; }
+}
+
+async function doubaoDelete(id) {
+  if (!confirm(`从列表移除「${id}」？`)) return;
+  try {
+    await api(`/voice/doubao/speakers?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+    toast('已移除', 'success'); await loadSpeakers(true);
+  } catch (e) { toast('移除失败: ' + e.message, 'error'); }
 }
 
 function refreshVoiceOptions() {
   const proto = document.getElementById('vc-tts-proto')?.value || 'deepseek';
-  const voices = (V.catalog[proto] || {}).voices || [];
-  const sel = document.getElementById('vc-tts-voice');
-  if (sel) sel.innerHTML = voices.map(v => `<option value="${esc(v.id)}">${esc(v.label)}</option>`).join('');
+  V.cfg.tts = { ...(V.cfg.tts || {}), protocol: proto };
+  renderVoiceCard();
 }
 
 async function saveVoice() {
@@ -930,6 +1256,9 @@ async function saveVoice() {
       enabled: true,
       sendMode: document.getElementById('vc-send-mode').value,
       randomRate: Number(document.getElementById('vc-random').value) || 0.35,
+      emotion: document.getElementById('vc-emotion')?.value || '',
+      emotionScale: Number(document.getElementById('vc-emotion-scale')?.value) || 4,
+      speed: Number(document.getElementById('vc-speed')?.value) || 1,
       asr: {
         enabled: true,
         protocol: document.getElementById('vc-asr-proto').value,
@@ -962,6 +1291,9 @@ async function previewVoice() {
       providerId: document.getElementById('vc-tts-provider').value || null,
       modelId: document.getElementById('vc-tts-model').value.trim() || null,
       voice: document.getElementById('vc-tts-voice').value || null,
+      emotion: document.getElementById('vc-emotion')?.value || null,
+      emotionScale: Number(document.getElementById('vc-emotion-scale')?.value) || null,
+      speed: Number(document.getElementById('vc-speed')?.value) || null,
     }) });
     const dur = r.durationSeconds ? `${r.durationSeconds.toFixed(1)}s` : '时长未知';
     box.innerHTML = `<div class="hint" style="margin-bottom:6px">音色 ${esc(r.voice)} · ${dur} · ${(r.bytes / 1024).toFixed(0)}KB</div>
@@ -976,6 +1308,654 @@ async function fixVoicePermission() {
   const r = await apiSafe('/voice/permission', { method: 'POST', body: '{}' });
   if (!r) return;
   toast(r.ok ? (r.changed ? '已写入语音读取权限' : '权限已就绪') : ('失败：' + (r.reason || '未知')), r.ok ? 'success' : 'error');
+}
+
+// ── QQ 专区 ──
+function switchZone(z) {
+  S.zone = z;
+  document.getElementById('wx-zone').style.display = z === 'wx' ? '' : 'none';
+  document.getElementById('qq-zone').style.display = z === 'qq' ? '' : 'none';
+  document.getElementById('zone-tab-wx').classList.toggle('active', z === 'wx');
+  document.getElementById('zone-tab-qq').classList.toggle('active', z === 'qq');
+  const hint = document.getElementById('zone-hint');
+  if (hint) hint.textContent = z === 'qq' ? 'NapCatQQ · OneBot 11 · 个人号' : 'WeChatAgent · 本地 Hook';
+  if (z === 'qq') {
+    loadQQ();
+    if (S.qq.target) loadQQMessages();
+    else qqShowChannelPanel();   // 没选会话时回到通道设置
+  } else if (S.current) {
+    // 从 QQ 切回来时，把微信这边的设置面板重画一遍
+    renderSettings(S.current, 'chat-settings');
+  }
+}
+
+async function loadQQ() {
+  const st = document.getElementById('qq-status');
+  if (!st) return;
+  try {
+    const s = await apiSafe('/qq/status');
+    st.innerHTML = s?.online
+      ? `✅ 已连接：${esc(s.account?.nickname || '')} (${s.account?.user_id || ''})<br><span class="hint dim">${esc(s.httpUrl || '')}</span>`
+      : (s?.enabled ? `⚠️ 已启用但连不上：${esc(s.error || 'NapCat 未运行')}` : '未启用（在右侧填好地址并保存）');
+  } catch (e) { st.textContent = '状态读取失败：' + e.message; }
+  try {
+    const d = await apiSafe('/qq/chats');
+    const online = d?.chats || [];
+    // 合并：NapCat 在线列表 + 已经配置过设置的 QQ 会话（离线也能看到）
+    const byTalker = new Map();
+    for (const c of online) byTalker.set(c.talker, c);
+    for (const c of S.qqChats || []) {
+      if (!byTalker.has(c.talker)) byTalker.set(c.talker, { talker: c.talker, name: c.name || c.talker, kind: c.kind || 'private', offline: true });
+    }
+    S.qq.chats = [...byTalker.values()];
+    document.getElementById('qq-chat-count').textContent = S.qq.chats.length;
+    document.getElementById('qq-chat-list').innerHTML = S.qq.chats.length
+      ? S.qq.chats.map(c => `<div class="chat-item ${S.qq.target === c.talker.replace('qq:', '') ? 'active' : ''}"
+          onclick="selectQQChat('${esc(c.talker)}')">${c.kind === 'group' ? '👥' : '👤'} ${esc(c.name)}</div>`).join('')
+      : '<div class="empty"><span class="big">🐧</span>连上 NapCat 后这里会列出好友和群</div>';
+  } catch (e) { /* ignore */ }
+  try {
+    const c = await apiSafe('/config');
+    const q = c?.qq || {};
+    document.getElementById('qq-enabled').checked = !!q.enabled;
+    document.getElementById('qq-http').value = q.httpUrl || '';
+    document.getElementById('qq-token').value = q.token || '';
+    document.getElementById('qq-ffmpeg').value = q.ffmpegPath || '';
+    document.getElementById('qq-proactive').checked = !!q.proactive?.enabled;
+    document.getElementById('qq-idle').value = q.proactive?.idleMinutes ?? 120;
+    document.getElementById('qq-maxday').value = q.proactive?.maxPerDay ?? 3;
+    document.getElementById('qq-ai-enabled').checked = q.aiActions?.enabled !== false;
+    document.getElementById('qq-ai-risk').checked = q.aiActions?.allowHighRisk === true;
+    // 主动消息
+    document.getElementById('qq-proactive').checked = !!q.proactive?.enabled;
+    qqWindows = (q.proactive?.windows || []).map(w => ({ start: w.start, end: w.end }));
+    qqRenderWindows();
+    document.getElementById('qq-iv-min').value = q.proactive?.intervalMin ?? 40;
+    document.getElementById('qq-iv-max').value = q.proactive?.intervalMax ?? 120;
+    document.getElementById('qq-burst-min').value = q.proactive?.burstMin ?? 1;
+    document.getElementById('qq-burst-max').value = q.proactive?.burstMax ?? 3;
+    document.getElementById('qq-gap-min').value = q.proactive?.gapMin ?? 4;
+    document.getElementById('qq-gap-max').value = q.proactive?.gapMax ?? 15;
+    document.getElementById('qq-ai-line').value = q.proactive?.aiGenerated === false ? '0' : '1';
+    const tg = document.getElementById('qq-targets');
+    if (tg) {
+      const list = q.proactive?.targets || [];
+      tg.innerHTML = list.length
+        ? '<div class="hint dim" style="margin-bottom:4px">主动消息目标</div>' + list.map(t =>
+            `<span class="tag tag-purple" style="margin-right:6px">${esc(t)} <a href="#" onclick="qqRemoveTarget('${esc(t)}');return false" style="color:inherit">✕</a></span>`).join('')
+        : '<span class="hint dim">还没有目标会话</span>';
+    }
+  } catch (e) { /* ignore */ }
+  qqFillSelects();
+  qqLoadRooms();
+  poolFillSelects();
+  poolLoadList();
+  qqLoadSchedules();
+}
+
+function selectQQChat(talker) {
+  S.qq.target = String(talker).replace('qq:', '');
+  const c = S.qq.chats.find(x => x.talker === talker);
+  document.getElementById('qq-chat-title').textContent = c ? c.name : S.qq.target;
+  for (const el of document.querySelectorAll('#qq-chat-list .chat-item')) {
+    el.classList.toggle('active', el.getAttribute('onclick')?.includes(talker));
+  }
+  loadQQMessages();
+  // 选中就展示这个 QQ 会话的独立设置（和微信那套一样）
+  qqShowChatSettings(talker);
+}
+
+/** 拉 QQ 会话历史并渲染（NapCat 实时消息 + 灵枢 AI 对话） */
+async function loadQQMessages() {
+  const box = document.getElementById('qq-messages');
+  if (!box) return;
+  const t = S.qq.target;
+  if (!t) { box.innerHTML = '<div class="empty"><span class="big">🐧</span>先在左侧选一个 QQ 好友或群</div>'; return; }
+  box.innerHTML = '<div class="empty"><span class="big">⏳</span>读取中…</div>';
+  try {
+    const d = await apiSafe(`/qq/history?target=${encodeURIComponent(t)}&count=60`);
+    const msgs = d?.messages || [];
+    if (!msgs.length) {
+      box.innerHTML = '<div class="empty"><span class="big">📭</span>这个会话还没有消息<br><span class="hint dim">在下面输入框发一条试试</span></div>';
+      return;
+    }
+    box.innerHTML = msgs.map(m => {
+      const out = m.role === 'assistant';
+      const who = m.sender || (out ? 'AI' : '');
+      const time = m.ts ? fmtTime(m.ts) : '';
+      return `<div class="msg ${out ? 'out' : 'in'}">${esc(m.content)}
+        <div class="meta">${esc(who)}${time ? ' · ' + esc(time) : ''}</div></div>`;
+    }).join('');
+    box.scrollTop = box.scrollHeight;
+  } catch (e) {
+    box.innerHTML = `<div class="empty"><span class="big">⚠️</span>读取失败：${esc(e.message)}</div>`;
+  }
+}
+
+/** 在 QQ 专区右侧显示该 QQ 会话的独立设置（模型/人设/记忆/插件/语音全都有） */
+function qqShowChatSettings(talker = null) {
+  const t = talker || (S.qq.target ? `qq:${S.qq.target}` : '');
+  if (!t) { toast('先在左侧选一个 QQ 会话', 'error'); return; }
+  document.getElementById('qq-channel-panel').style.display = 'none';
+  const box = document.getElementById('qq-chat-settings');
+  box.style.display = '';
+  // 顶部放个返回入口，否则「主动消息 / 通道设置」那些卡片就找不到了
+  box.innerHTML = '<div class="btn-group" style="margin-bottom:8px">'
+    + '<button class="btn btn-sm btn-ghost" onclick="qqShowChannelPanel()">← 返回通道设置（主动消息 / 定时 / 专属操作）</button>'
+    + '</div><div id="qq-settings-inner"></div>';
+  renderSettings(t, 'qq-settings-inner');
+}
+
+function qqShowChannelPanel() {
+  document.getElementById('qq-chat-settings').style.display = 'none';
+  document.getElementById('qq-channel-panel').style.display = '';
+}
+
+function qqTarget() {
+  if (!S.qq.target) { toast('先在左侧选一个 QQ 好友或群', 'error'); return ''; }
+  return S.qq.target;
+}
+
+async function qqSendText() {
+  const t = qqTarget(); if (!t) return;
+  const input = document.getElementById('qq-input');
+  const text = input.value.trim(); if (!text) return;
+  try {
+    await api('/qq/send', { method: 'POST', body: JSON.stringify({ target: t, type: 'text', text }) });
+    input.value = ''; toast('已发送', 'success');
+    setTimeout(loadQQMessages, 600);
+  } catch (e) { toast('发送失败: ' + e.message, 'error'); }
+}
+
+async function qqSendImage(inputEl) {
+  const t = qqTarget(); if (!t) return;
+  const f = inputEl.files[0]; if (!f) return;
+  try {
+    const b64 = await new Promise((res, rej) => {
+      const fr = new FileReader();
+      fr.onload = () => res(String(fr.result).split(',')[1] || '');
+      fr.onerror = () => rej(new Error('读取失败'));
+      fr.readAsDataURL(f);
+    });
+    await api('/qq/send', { method: 'POST', body: JSON.stringify({ target: t, type: 'image', audioBase64: b64 }) });
+    inputEl.value = ''; toast('真实图片已发送', 'success');
+    setTimeout(loadQQMessages, 800);
+  } catch (e) { toast('发送失败: ' + e.message, 'error'); }
+}
+
+async function qqSendVoice() {
+  const t = qqTarget(); if (!t) return;
+  const text = document.getElementById('qq-input').value.trim() || '这是一条语音测试。';
+  toast('合成并转 SILK 中…', 'info');
+  try {
+    await api('/qq/test/voice', { method: 'POST', body: JSON.stringify({ target: t, text }) });
+    toast('真实语音气泡已发送', 'success');
+    setTimeout(loadQQMessages, 800);
+  } catch (e) { toast('发送失败: ' + e.message, 'error'); }
+}
+
+async function qqSendFace() {
+  const t = qqTarget(); if (!t) return;
+  const id = prompt('QQ 表情 ID（数字，如 14 = 微笑）', '14');
+  if (!id) return;
+  try {
+    await api('/qq/send', { method: 'POST', body: JSON.stringify({ target: t, type: 'face', id }) });
+    toast('表情已发送', 'success');
+  } catch (e) { toast('发送失败: ' + e.message, 'error'); }
+}
+
+async function qqTestVoice() {
+  const t = qqTarget(); if (!t) return;
+  toast('测试语音链路…', 'info');
+  try {
+    const r = await api('/qq/test/voice', { method: 'POST', body: JSON.stringify({ target: t, text: '这是一条 QQ 真实语音测试。' }) });
+    toast(`语音气泡已发送（${(r.bytes / 1024).toFixed(0)}KB）`, 'success');
+  } catch (e) { toast('失败: ' + e.message, 'error'); }
+}
+
+async function saveQQConfig() {
+  const qq = {
+    enabled: document.getElementById('qq-enabled').checked,
+    httpUrl: document.getElementById('qq-http').value.trim(),
+    token: document.getElementById('qq-token').value.trim(),
+    ffmpegPath: document.getElementById('qq-ffmpeg').value.trim(),
+    proactive: {
+      enabled: document.getElementById('qq-proactive').checked,
+      idleMinutes: Number(document.getElementById('qq-idle').value) || 120,
+      maxPerDay: Number(document.getElementById('qq-maxday').value) || 3,
+    },
+  };
+  try {
+    await api('/qq/config', { method: 'POST', body: JSON.stringify({ qq }) });
+    toast('QQ 设置已保存', 'success');
+    await loadQQ();
+  } catch (e) { toast('保存失败: ' + e.message, 'error'); }
+}
+
+// ── 记忆同步 / 定时 / AI 操作 ──
+function qqFillSelects() {
+  const wx = document.getElementById('qq-room-wx');
+  if (wx) wx.innerHTML = '<option value="">选一个微信聊天</option>' + (S.chats || []).map(c =>
+    `<option value="${esc(c.talker)}">${esc(c.name || c.talker)}</option>`).join('');
+  const opts = '<option value="">选一个 QQ 会话</option>' + (S.qq.chats || []).map(c =>
+    `<option value="${esc(c.talker.replace('qq:', ''))}">${esc(c.name)}</option>`).join('');
+  for (const id of ['qq-room-qq', 'qq-sch-target']) {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = opts;
+  }
+}
+
+// ── 聊天池（同步会话）──
+async function openPoolPanel() {
+  const el = document.getElementById('pool-panel');
+  el.style.display = '';
+  // QQ 会话平时只在切到 QQ 专区才加载，这里直接拉一次，避免下拉里没有 QQ
+  if (!(S.qq?.chats || []).length) {
+    try {
+      const d = await apiSafe('/qq/chats');
+      const map = new Map();
+      for (const c of (d?.chats || [])) map.set(c.talker, c);
+      for (const c of (S.qqChats || [])) if (!map.has(c.talker)) map.set(c.talker, c);
+      if (map.size) S.qq.chats = [...map.values()];
+    } catch (e) { /* 忽略，只影响 QQ 选项 */ }
+  }
+  poolFillSelects();
+  poolLoadList();
+  el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function closePoolPanel() {
+  document.getElementById('pool-panel').style.display = 'none';
+}
+
+/** A/B 下拉：微信会话 + QQ 会话都能选，可同平台也可跨平台 */
+function poolFillSelects() {
+  const wxList = S.chats || [];
+  const qqList = S.qq?.chats || [];
+  const opts = [
+    '<option value="">选一个会话</option>',
+    ...wxList.map(c => `<option value="${esc(c.talker)}">💬 ${esc(c.name || c.talker)}（微信）</option>`),
+    ...qqList.map(c => `<option value="${esc(c.talker)}">🐧 ${esc(c.name || c.talker)}（QQ）</option>`),
+  ].join('');
+  for (const id of ['pool-a', 'pool-b']) {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = opts;
+  }
+  const hint = document.getElementById('pool-avail');
+  if (hint) {
+    hint.textContent = `可选：微信 ${wxList.length} 个 · QQ ${qqList.length} 个`;
+    hint.style.color = qqList.length ? '' : 'var(--warning, #d29922)';
+  }
+}
+
+/** 重新拉微信 + QQ 会话列表（QQ 没连上时也能看到已配置的） */
+async function poolReloadChats() {
+  try {
+    const d = await apiSafe('/chats');
+    if (d) { S.chats = d.chats || []; S.qqChats = d.qqChats || []; }
+  } catch { /* ignore */ }
+  try {
+    const q = await apiSafe('/qq/chats');
+    const map = new Map();
+    for (const c of (q?.chats || [])) map.set(c.talker, c);
+    for (const c of (S.qqChats || [])) if (!map.has(c.talker)) map.set(c.talker, c);
+    S.qq.chats = [...map.values()];
+  } catch { /* ignore */ }
+  poolFillSelects();
+}
+
+async function createPool() {
+  const a = document.getElementById('pool-a').value;
+  const b = document.getElementById('pool-b').value;
+  const direction = document.getElementById('pool-dir').value;
+  const wipe = document.getElementById('pool-wipe').checked;
+  if (!a || !b) { toast('两个会话都要选', 'error'); return; }
+  if (a === b) { toast('不能和自己同步', 'error'); return; }
+  if (wipe && direction !== 'merge' && !confirm('目标会话的聊天记录和记忆会被清空，然后从源会话完整复制。确定继续？')) return;
+  try {
+    const r = await api('/sync/pools', { method: 'POST', body: JSON.stringify({ a, b, direction, wipe }) });
+    const w = r.stats?.wiped;
+    toast(`聊天池已建立：复制 ${r.stats?.msgs || 0} 条历史 / ${r.stats?.mems || 0} 条记忆 / ${r.stats?.settings || 0} 项设置`
+      + (w ? `，已清空目标 ${w.msgs} 条消息、${w.mems} 条记忆` : ''), 'success');
+    await poolLoadList();
+    await loadChats();
+  } catch (e) { toast('失败: ' + e.message, 'error'); }
+}
+
+async function poolLoadList() {
+  const box = document.getElementById('pool-list');
+  if (!box) return;
+  const d = await apiSafe('/sync/pools');
+  const pools = d?.pools || [];
+  const cnt = document.getElementById('pool-count');
+  if (cnt) cnt.textContent = pools.length ? `${pools.length} 个聊天池` : '';
+  if (!pools.length) { box.innerHTML = '<div class="hint dim">还没有同步的会话</div>'; return; }
+  box.innerHTML = pools.map(p => `
+    <div style="border:1px solid var(--border);border-radius:6px;padding:9px;margin-bottom:8px">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+        <strong style="font-size:13px">${esc(p.name)}</strong>
+        <button class="btn btn-sm btn-ghost" style="margin-left:auto" onclick="poolResync('${esc(p.id)}')">重新同步</button>
+        <button class="btn btn-sm btn-ghost" onclick="poolDel('${esc(p.id)}')">解绑</button>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px">
+        ${p.members.map(m => `<span class="tag ${m.platform === 'qq' ? 'tag-purple' : ''}">${m.platform === 'qq' ? '🐧' : '💬'} ${esc(m.name)}</span>`).join('<span class="hint dim">⇄</span>')}
+      </div>
+      <div class="hint dim" style="margin-top:4px">
+        设置 ${p.sync.settings ? '✓' : '✗'} · 历史 ${p.sync.messages ? '✓' : '✗'} · 记忆 ${p.sync.memory ? '✓' : '✗'}
+        ${p.lastSync ? ` · 上次同步 ${new Date(p.lastSync).toLocaleString('zh-CN', { hour12: false })}` : ''}
+      </div>
+    </div>`).join('');
+}
+
+async function poolResync(id) {
+  try {
+    const r = await api('/sync/pools/sync', { method: 'POST', body: JSON.stringify({ id }) });
+    toast(`已同步：${r.moved || 0} 条 / ${r.settings || 0} 项设置`, 'success');
+    await poolLoadList();
+  } catch (e) { toast('失败: ' + e.message, 'error'); }
+}
+
+async function poolDel(id) {
+  if (!confirm('解绑这个聊天池？不会删除聊天记录和记忆，只是不再互相同步。')) return;
+  try {
+    await api(`/sync/pools?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+    toast('已解绑', 'success');
+    await poolLoadList();
+  } catch (e) { toast('失败: ' + e.message, 'error'); }
+}
+
+// ── 聊天室 ──
+async function qqLoadRooms() {
+  const box = document.getElementById('qq-room-list');
+  if (!box) return;
+  const d = await apiSafe('/qq/rooms');
+  const rooms = d?.rooms || [];
+  box.innerHTML = rooms.length ? rooms.map(r => `
+    <div style="border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:8px">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+        <strong style="font-size:13px">${esc(r.name)}</strong>
+        <span class="tag tag-purple">${r.members.length} 端</span>
+        <button class="btn btn-sm btn-ghost" style="margin-left:auto" onclick="qqJoinRoomTo('${esc(r.id)}')">+ 当前会话</button>
+        <button class="btn btn-sm btn-ghost" onclick="qqSyncRoom('${esc(r.id)}')">同步</button>
+        <button class="btn btn-sm btn-ghost" onclick="qqDelRoom('${esc(r.id)}')">删</button>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px">
+        ${r.members.map(m => `<span class="tag ${m.platform === 'qq' ? 'tag-purple' : ''}">${m.platform === 'qq' ? '🐧' : '💬'} ${esc(m.name || m.talker)}
+          <a href="#" onclick="qqRemoveMember('${esc(r.id)}','${esc(m.talker)}');return false" style="color:inherit;margin-left:4px">✕</a></span>`).join('')}
+      </div>
+      <div class="hint dim" style="margin-top:4px">设置 ${r.sync.settings ? '✓' : '✗'} · 历史 ${r.sync.messages ? '✓' : '✗'} · 记忆 ${r.sync.memory ? '✓' : '✗'}${r.lastSync ? ` · 上次同步 ${new Date(r.lastSync).toLocaleTimeString()}` : ''}</div>
+    </div>`).join('') : '<div class="hint dim">还没有聊天室</div>';
+}
+
+async function qqCreateRoom() {
+  const name = document.getElementById('qq-room-name').value.trim() || '新聊天室';
+  const wx = document.getElementById('qq-room-wx').value;
+  const qq = document.getElementById('qq-room-qq').value;
+  const members = [];
+  if (wx) members.push({ platform: 'wx', talker: wx, name: (S.chats.find(c => c.talker === wx) || {}).name || wx });
+  if (qq) members.push({ platform: 'qq', talker: `qq:${qq}`, name: (S.qq.chats.find(c => c.talker === `qq:${qq}`) || {}).name || qq });
+  if (!members.length) { toast('至少选一个会话', 'error'); return; }
+  try {
+    const r = await api('/qq/rooms', { method: 'POST', body: JSON.stringify({ name, members }) });
+    toast(`聊天室「${r.room.name}」已创建，同步 ${r.synced?.moved || 0} 条 / ${r.synced?.settings || 0} 项设置`, 'success');
+    document.getElementById('qq-room-name').value = '';
+    await qqLoadRooms();
+  } catch (e) { toast('失败: ' + e.message, 'error'); }
+}
+
+async function qqDelRoom(id) {
+  if (!confirm('删除这个聊天室？不会删聊天记录和记忆，只是不再同步。')) return;
+  try {
+    await api(`/qq/rooms?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+    toast('已删除', 'success'); await qqLoadRooms();
+  } catch (e) { toast('失败: ' + e.message, 'error'); }
+}
+
+async function qqSyncRoom(id) {
+  try {
+    const r = await api('/qq/rooms/sync', { method: 'POST', body: JSON.stringify({ id }) });
+    toast(`同步完成：历史/记忆 ${r.moved || 0} 条，设置 ${r.settings || 0} 项`, 'success');
+    await qqLoadRooms();
+  } catch (e) { toast('失败: ' + e.message, 'error'); }
+}
+
+async function qqSyncAllRooms() {
+  try {
+    const r = await api('/qq/rooms/sync', { method: 'POST', body: '{}' });
+    toast(`全部同步：${r.rooms || 0} 个聊天室，${r.moved || 0} 条 / ${r.settings || 0} 项`, 'success');
+    await qqLoadRooms();
+  } catch (e) { toast('失败: ' + e.message, 'error'); }
+}
+
+async function qqRemoveMember(roomId, talker) {
+  try {
+    await api('/qq/rooms/member', { method: 'POST', body: JSON.stringify({ id: roomId, talker, remove: true }) });
+    toast('已移出聊天室', 'success'); await qqLoadRooms();
+  } catch (e) { toast('失败: ' + e.message, 'error'); }
+}
+
+/** 把当前选中的 QQ 会话加进指定聊天室 */
+async function qqJoinRoomTo(roomId) {
+  if (!S.qq.target) { toast('先在左侧选一个 QQ 会话', 'error'); return; }
+  const talker = `qq:${S.qq.target}`;
+  try {
+    const c = S.qq.chats.find(x => x.talker === talker);
+    await api('/qq/rooms/member', {
+      method: 'POST',
+      body: JSON.stringify({ id: roomId, talker, platform: 'qq', name: c?.name || S.qq.target, resync: true }),
+    });
+    toast('已加入并同步', 'success');
+    await qqLoadRooms();
+  } catch (e) { toast('失败: ' + e.message, 'error'); }
+}
+
+function qqJoinRoom() {
+  if (!S.qq.target) { toast("先在左侧选一个 QQ 会话", "error"); return; }
+  openPoolPanel();
+  const sel = document.getElementById("pool-a");
+  if (sel) sel.value = "qq:" + S.qq.target;
+}
+async function qqLoadSchedules() {
+  const box = document.getElementById('qq-sch-list');
+  if (!box) return;
+  const d = await apiSafe('/qq/schedules');
+  const list = d?.schedules || [];
+  box.innerHTML = list.length ? list.map(s =>
+    `<div class="chips" style="margin-bottom:5px"><span class="tag">${esc(s.target)}</span>
+     <span class="hint dim">${esc(s.text.slice(0, 18))} · ${s.everyMinutes ? `每 ${s.everyMinutes} 分` : '一次'}</span>
+     <button class="btn btn-sm btn-ghost" onclick="qqDelSchedule('${esc(s.id)}')">删</button></div>`).join('')
+    : '<div class="hint dim">还没有定时消息</div>';
+}
+
+async function qqAddSchedule() {
+  const target = document.getElementById('qq-sch-target').value;
+  const text = document.getElementById('qq-sch-text').value.trim();
+  const everyMinutes = Number(document.getElementById('qq-sch-every').value) || 0;
+  if (!target || !text) { toast('目标和内容都要填', 'error'); return; }
+  try {
+    await api('/qq/schedules', { method: 'POST', body: JSON.stringify({ target, text, everyMinutes }) });
+    toast('定时已添加', 'success');
+    document.getElementById('qq-sch-text').value = '';
+    await qqLoadSchedules();
+  } catch (e) { toast('失败: ' + e.message, 'error'); }
+}
+
+async function qqDelSchedule(id) {
+  try {
+    await api(`/qq/schedules?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+    toast('已删除', 'success'); await qqLoadSchedules();
+  } catch (e) { toast('失败: ' + e.message, 'error'); }
+}
+
+// ── QQ 专属操作（头像 / 签名 / 点赞 / 空间 / 群）──
+async function qqAction(action, params = {}) {
+  const r = await api('/qq/action', { method: 'POST', body: JSON.stringify({ action, params }) });
+  if (r?.ok === false) throw new Error(r.error || '执行失败');
+  return r;
+}
+
+function qqExtraOut(msg, bad = false) {
+  const el = document.getElementById('qq-extra-out');
+  if (el) { el.textContent = msg; el.style.color = bad ? 'var(--danger, #f85149)' : ''; }
+}
+
+async function qqSetAvatar() {
+  const input = document.getElementById('qq-avatar-file');
+  const f = input?.files?.[0];
+  if (!f) { toast('先选一张图片', 'error'); return; }
+  if (f.size > 6 * 1024 * 1024) { toast('图片太大了（建议 2MB 内）', 'error'); return; }
+  try {
+    const b64 = await new Promise((res, rej) => {
+      const fr = new FileReader();
+      fr.onload = () => res(String(fr.result));
+      fr.onerror = rej;
+      fr.readAsDataURL(f);
+    });
+    await qqAction('set_qq_avatar', { file: b64 });
+    toast('头像已更换', 'success');
+    qqExtraOut(`头像已更新：${f.name}`);
+    input.value = '';
+  } catch (e) { toast('换头像失败: ' + e.message, 'error'); qqExtraOut('换头像失败：' + e.message, true); }
+}
+
+async function qqSetLongNick() {
+  const v = document.getElementById('qq-longnick').value.trim();
+  if (!v) { toast('写点什么', 'error'); return; }
+  try {
+    await qqAction('set_self_longnick', { longNick: v });
+    toast('个性签名已更新', 'success');
+    qqExtraOut(`签名已改为：${v}`);
+  } catch (e) { toast('失败: ' + e.message, 'error'); qqExtraOut('改签名失败：' + e.message, true); }
+}
+
+async function qqSendLike() {
+  const raw = document.getElementById('qq-like-uin').value.trim();
+  const uin = Number(raw);
+  if (!uin) { toast('填好友的 QQ 号', 'error'); return; }
+  try {
+    await qqAction('send_like', { user_id: uin, times: 10 });
+    toast('已点赞', 'success');
+    qqExtraOut(`已给 ${uin} 点赞 10 次`);
+  } catch (e) { toast('失败: ' + e.message, 'error'); qqExtraOut('点赞失败：' + e.message, true); }
+}
+
+async function qqQzoneFeeds() {
+  const out = document.getElementById('qq-qzone-out');
+  out.textContent = '读取中…';
+  try {
+    const r = await qqAction('get_qzone_feeds', {});
+    const feeds = r?.result?.feeds || r?.result?.data?.feeds || [];
+    if (!feeds.length) { out.textContent = '空间暂时没有动态'; return; }
+    out.innerHTML = feeds.slice(0, 6).map(f =>
+      `<div style="margin:3px 0">· ${esc(String(f.content || f.summary || '').slice(0, 60))}</div>`).join('');
+  } catch (e) { out.textContent = '读取失败：' + e.message; }
+}
+
+async function qqSetGroupCard() {
+  const gid = Number(document.getElementById('qq-group-id').value.trim());
+  const card = document.getElementById('qq-group-card').value.trim();
+  if (!gid) { toast('填群号', 'error'); return; }
+  if (!card) { toast('填群名片', 'error'); return; }
+  try {
+    // 需要自己的 QQ 号
+    const st = await apiSafe('/qq/status');
+    const selfId = st?.account?.user_id;
+    if (!selfId) { toast('读不到自己的 QQ 号', 'error'); return; }
+    await qqAction('set_group_card', { group_id: gid, user_id: selfId, card });
+    toast('群名片已更新', 'success');
+    qqExtraOut(`群 ${gid} 的名片改成：${card}`);
+  } catch (e) { toast('失败: ' + e.message, 'error'); qqExtraOut('改群名片失败：' + e.message, true); }
+}
+
+async function qqSaveAiActions() {
+  const payload = {
+    qq: {
+      aiActions: {
+        enabled: document.getElementById('qq-ai-enabled').checked,
+        allowHighRisk: document.getElementById('qq-ai-risk').checked,
+      },
+    },
+  };
+  try {
+    await api('/qq/config', { method: 'POST', body: JSON.stringify(payload) });
+    toast('AI 操作权限已保存', 'success');
+  } catch (e) { toast('失败: ' + e.message, 'error'); }
+}
+
+// ── 主动消息：时间段 ──
+let qqWindows = [];
+
+function qqRenderWindows() {
+  const box = document.getElementById('qq-windows');
+  if (!box) return;
+  box.innerHTML = qqWindows.length
+    ? qqWindows.map((w, i) => `<div class="chips" style="margin-bottom:5px;align-items:center">
+        <input type="time" value="${esc(w.start || '09:00')}" onchange="qqWindows[${i}].start=this.value" class="ctl" style="width:110px">
+        <span class="hint">→</span>
+        <input type="time" value="${esc(w.end || '12:00')}" onchange="qqWindows[${i}].end=this.value" class="ctl" style="width:110px">
+        <button class="btn btn-sm btn-ghost" onclick="qqDelWindow(${i})">删</button>
+      </div>`).join('')
+    : '<div class="hint dim">没有限制（全天）</div>';
+}
+
+function qqAddWindow() {
+  qqWindows.push({ start: '09:00', end: '12:00' });
+  qqRenderWindows();
+}
+
+function qqDelWindow(i) {
+  qqWindows.splice(i, 1);
+  qqRenderWindows();
+}
+
+async function saveQQProactive() {
+  const p = {
+    enabled: document.getElementById('qq-proactive').checked,
+    windows: qqWindows.filter(w => w.start && w.end),
+    intervalMin: Number(document.getElementById('qq-iv-min').value) || 40,
+    intervalMax: Number(document.getElementById('qq-iv-max').value) || 120,
+    burstMin: Number(document.getElementById('qq-burst-min').value) || 1,
+    burstMax: Number(document.getElementById('qq-burst-max').value) || 3,
+    gapMin: Number(document.getElementById('qq-gap-min').value) || 4,
+    gapMax: Number(document.getElementById('qq-gap-max').value) || 15,
+    idleMinutes: Number(document.getElementById('qq-idle').value) || 120,
+    maxPerDay: Number(document.getElementById('qq-maxday').value) || 3,
+    aiGenerated: document.getElementById('qq-ai-line').value === '1',
+  };
+  try {
+    await api('/qq/config', { method: 'POST', body: JSON.stringify({ qq: { proactive: p } }) });
+    toast('主动消息设置已保存', 'success');
+    await loadQQ();
+  } catch (e) { toast('保存失败: ' + e.message, 'error'); }
+}
+
+async function qqProactiveTick() {
+  try {
+    const r = await api('/qq/proactive/tick', { method: 'POST', body: '{}' });
+    toast(r?.sent ? `发出 ${r.sent} 条` : (r?.reason || '这轮没触发（不在时段/已达上限/对方刚说过话）'), r?.sent ? 'success' : 'info');
+  } catch (e) { toast('失败: ' + e.message, 'error'); }
+}
+
+async function qqAddTarget() {
+  if (!S.qq.target) { toast('先在左侧选一个 QQ 会话', 'error'); return; }
+  try {
+    const c = await apiSafe('/config');
+    const cur = c?.qq?.proactive?.targets || [];
+    if (cur.includes(S.qq.target)) { toast('已经在列表里了', 'info'); return; }
+    await api('/qq/config', { method: 'POST', body: JSON.stringify({ qq: { proactive: { targets: [...cur, S.qq.target] } } }) });
+    toast('已加入主动消息目标', 'success');
+    await loadQQ();
+  } catch (e) { toast('失败: ' + e.message, 'error'); }
+}
+
+async function qqRemoveTarget(t) {
+  try {
+    const c = await apiSafe('/config');
+    const cur = (c?.qq?.proactive?.targets || []).filter(x => x !== t);
+    await api('/qq/config', { method: 'POST', body: JSON.stringify({ qq: { proactive: { targets: cur } } }) });
+    toast('已移除', 'success');
+    await loadQQ();
+  } catch (e) { toast('失败: ' + e.message, 'error'); }
 }
 
 // ── AI 提供商 ──
@@ -1077,6 +2057,7 @@ async function loadChats() {
   const d = await apiSafe('/chats');
   if (!d) return;
   S.chats = d.chats || [];
+  S.qqChats = d.qqChats || [];
   renderChatList();
   renderAgentWhitelist(d.agentWhitelist);
   document.getElementById('chat-count').textContent = S.chats.length;
@@ -1262,17 +2243,40 @@ async function addChat(talker, kind, conversationId, name) {
 }
 
 function voiceOptionsForChat(protocol, cur) {
+  if (protocol === 'doubao') return speakerGroups(V.official || [], V.cloned || [], cur);
   const voices = (V.catalog?.[protocol || 'deepseek'] || {}).voices || [];
   return voices.map(v => `<option value="${esc(v.id)}" ${cur === v.id ? 'selected' : ''}>${esc(v.label)}</option>`).join('');
 }
 
-async function renderSettings(talker) {
-  const box = document.getElementById('chat-settings');
-  const c = S.chats.find(x => x.talker === talker);
+function onVoiceEngineChange(talker, engine) {
+  S.editEngine = { talker, engine };
+  renderSettings(talker);
+}
+
+async function renderSettings(talker, boxId = null) {
+  // 容器按会话所属平台自动选择，避免微信的设置被画到 QQ 的隐藏容器里
+  const isQQ = String(talker).startsWith('qq:');
+  const target = boxId || (isQQ ? (S.qqSettingsBox || 'qq-chat-settings') : 'chat-settings');
+  const box = document.getElementById(target);
+  if (!box) return;
+  if (isQQ) S.qqSettingsBox = target;   // 记住 QQ 上一次用的容器（可能是内层带返回按钮的）
+  S.settingsBox = target;
+  // 微信聊天在 S.chats；QQ 会话要优先用 S.qqChats（带 settings），好友列表 S.qq.chats 没有设置字段
+  const c = S.chats.find(x => x.talker === talker)
+    || (S.qqChats || []).find(x => x.talker === talker)
+    || (S.qq?.chats || []).find(x => x.talker === talker);
   if (!c) { box.innerHTML = '<div class="empty"><span class="big">⚙️</span>选择聊天后在这里配置</div>'; return; }
   // 用「生效值」而不是原始覆盖值，避免未设置的项显示成 0/关闭
   const eff = c.settings?.context || {};
   const effV = c.settings?.voice || {};
+  const curEngine = (S.editEngine && S.editEngine.talker === talker)
+    ? S.editEngine.engine : ((c.voice && c.voice.engine) || '');
+  const gProto = V.cfg?.tts?.protocol || 'deepseek';
+  const globalEngineLabel = gProto === 'doubao' ? '豆包' : gProto === 'deepseek' ? 'DeepSeek' : gProto;
+  const showProto = curEngine || effV.tts?.protocol || gProto;
+  if (showProto === 'doubao' && !(V.official || []).length) {
+    loadSpeakers().then(() => { if (S.current === talker) renderSettings(talker); });
+  }
   const curPid = c.model?.providerId || '';
   const provModels = S.providers.find(p => p.id === curPid)?.models || [];
   const compressOn = (eff.compressAtTokens ?? 0) !== 0;
@@ -1306,6 +2310,22 @@ async function renderSettings(talker) {
         ${c.model?.modelId && !provModels.some(m => m.id === c.model.modelId) ? `<option value="${esc(c.model.modelId)}" selected>${esc(c.model.modelId)}（已配置）</option>` : ''}
       </select>
     </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>该聊天的识图模型提供商</label>
+        <select id="cs-vision-provider" onchange="onChatVisionProviderChange('${esc(talker)}')">
+          <option value="">跟随全局</option>
+          ${S.providers.map(p => `<option value="${esc(p.id)}" ${(c.vision?.providerId || '') === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>识图模型</label>
+        <select id="cs-vision-model">
+          <option value="">跟随全局</option>
+          ${((S.providers.find(p => p.id === (c.vision?.providerId || ''))?.models) || []).map(m => `<option value="${esc(m.id)}" ${c.vision?.modelId === m.id ? 'selected' : ''}>${esc(m.id)}${m.multimodal ? ' 🖼' : ''}</option>`).join('')}
+        </select>
+      </div>
+    </div>
     <div class="form-group">
       <label>该聊天启用的插件</label>
       <div id="cs-plugins" style="display:flex;flex-direction:column;gap:6px">
@@ -1337,6 +2357,11 @@ async function renderSettings(talker) {
     <div class="divider"></div>
     <div class="form-group">
       <label class="checkline"><input type="checkbox" id="cs-voice-asr" ${effV.asrEnabled ? 'checked' : ''}> 语音识别（收到语音自动转文字）</label>
+      <div class="hint dim" style="margin-top:2px">
+        识别模型：${effV.asrConfigured
+          ? `<span style="color:var(--success,#3fb950)">已配置 · ${esc(effV.asr?.providerId || '默认')}</span>`
+          : '<span style="color:var(--warning,#d29922)">未配置（去「AI 配置 → 语音」里选识别模型）</span>'}
+      </div>
     </div>
     <div class="form-group">
       <label>语音发送方式</label>
@@ -1346,14 +2371,29 @@ async function renderSettings(talker) {
       </select>
     </div>
     <div class="form-row">
+      <div class="form-group"><label>语音引擎</label>
+        <select id="cs-voice-engine" onchange="onVoiceEngineChange('${esc(talker)}', this.value)">
+          <option value="" ${!curEngine ? 'selected' : ''}>跟随全局（${esc(globalEngineLabel)}）</option>
+          <option value="doubao" ${curEngine === 'doubao' ? 'selected' : ''}>豆包语音合成 2.0</option>
+          <option value="deepseek" ${curEngine === 'deepseek' ? 'selected' : ''}>DeepSeek TTS</option>
+        </select></div>
       <div class="form-group"><label>该聊天音色</label>
         <select id="cs-voice-voice">
           <option value="">跟随全局</option>
-          ${voiceOptionsForChat(effV.tts?.protocol, effV.tts?.voice)}
+          ${voiceOptionsForChat(showProto, effV.tts?.voice)}
         </select>
       </div>
       <div class="form-group"><label>随机概率</label><input id="cs-voice-random" type="number" min="0" max="1" step="0.05" value="${effV.randomRate ?? 0.35}"></div>
     </div>
+    ${showProto === 'doubao' ? `
+      <div class="form-row">
+        <div class="form-group"><label>该聊天情绪</label>
+          <select id="cs-voice-emotion"><option value="">跟随全局</option>
+            ${(V.emotions || []).map(e => `<option value="${esc(e.id)}" ${effV.emotion === e.id ? 'selected' : ''}>${esc(e.label)}（${esc(e.id)}）</option>`).join('')}
+          </select></div>
+        <div class="form-group"><label>情绪强度 1~5</label>
+          <input id="cs-voice-emotion-scale" type="number" min="1" max="5" value="${effV.emotionScale ?? 4}"></div>
+      </div>` : ''}
     <div class="hint dim">没有配置语音合成时，「语音发送方式」不会生效；AI 仍可用 send_voice 工具主动发语音。</div>
     <div class="divider"></div>
     <div class="form-group">
@@ -1373,13 +2413,21 @@ async function renderSettings(talker) {
     </div>`;
 }
 function onChatProviderChange(talker) {
-  const c = S.chats.find(x => x.talker === talker);
+  const c = S.chats.find(x => x.talker === talker) || (S.qq?.chats || []).find(x => x.talker === talker);
   const pid = document.getElementById('cs-provider').value;
   const prov = S.providers.find(p => p.id === pid);
   const sel = document.getElementById('cs-model');
   const keep = c?.model?.providerId === pid ? c.model.modelId : '';
   sel.innerHTML = '<option value="">跟随全局</option>' +
     (prov?.models || []).map(m => `<option value="${esc(m.id)}" ${m.id === keep ? 'selected' : ''}>${esc(m.id)}${m.multimodal ? ' 🖼' : ''}</option>`).join('');
+}
+
+function onChatVisionProviderChange(talker) {
+  const pid = document.getElementById('cs-vision-provider').value;
+  const prov = S.providers.find(p => p.id === pid);
+  const sel = document.getElementById('cs-vision-model');
+  sel.innerHTML = '<option value="">跟随全局</option>' +
+    (prov?.models || []).map(m => `<option value="${esc(m.id)}">${esc(m.id)}${m.multimodal ? ' 🖼' : ''}</option>`).join('');
 }
 async function saveChatSettings(talker) {
   const pluginBoxes = [...document.querySelectorAll('#cs-plugins input[type=checkbox]')];
@@ -1392,6 +2440,9 @@ async function saveChatSettings(talker) {
     model: document.getElementById('cs-provider').value
       ? { providerId: document.getElementById('cs-provider').value, modelId: document.getElementById('cs-model').value || null }
       : null,
+    vision: document.getElementById('cs-vision-provider').value
+      ? { providerId: document.getElementById('cs-vision-provider').value, modelId: document.getElementById('cs-vision-model').value || null }
+      : null,
     plugins: checked.length === all ? null : checked,
     persona: document.getElementById('cs-persona').value.trim() || null,
     style: document.getElementById('cs-style').value.trim() || null,
@@ -1401,6 +2452,15 @@ async function saveChatSettings(talker) {
       sendMode: document.getElementById('cs-voice-mode').value,
       voice: document.getElementById('cs-voice-voice').value || null,
       randomRate: Number(document.getElementById('cs-voice-random').value) || 0.35,
+      emotion: document.getElementById('cs-voice-emotion') ? (document.getElementById('cs-voice-emotion').value || null) : undefined,
+      emotionScale: document.getElementById('cs-voice-emotion-scale') ? (Number(document.getElementById('cs-voice-emotion-scale').value) || null) : undefined,
+      engine: document.getElementById('cs-voice-engine')?.value || null,
+      tts: (() => {
+        const eng = document.getElementById('cs-voice-engine')?.value || '';
+        if (!eng) return null;
+        const v = document.getElementById('cs-voice-voice')?.value || '';
+        return { providerId: eng, protocol: eng, voice: v || (eng === 'doubao' ? 'S_kDqSH3h12' : 'stella') };
+      })(),
     },
     context: {
       compressAtTokens: compressOn ? (Number(document.getElementById('cs-compress-at').value) || 48000) : 0,
@@ -1650,7 +2710,25 @@ async function streamLoop() {
 }
 
 // ════════════ 记忆 ════════════
-const M = { scopes: [], talker: null, detail: null, usage: null, tab: 'chat', member: null, searching: false, searchResult: [], urlApplied: false };
+const M = { scopes: [], talker: null, detail: null, usage: null, tab: 'chat', member: null, searching: false, searchResult: [], urlApplied: false, zone: 'wx' };
+
+function memZoneOf(talker) { return String(talker || '').startsWith('qq:') ? 'qq' : 'wx'; }
+
+function switchMemZone(z) {
+  M.zone = z;
+  document.getElementById('mem-tab-wx').classList.toggle('active', z === 'wx');
+  document.getElementById('mem-tab-qq').classList.toggle('active', z === 'qq');
+  const list = M.scopes.filter(s => memZoneOf(s.talker) === z);
+  const hint = document.getElementById('mem-zone-hint');
+  if (hint) hint.textContent = `${z === 'qq' ? 'QQ' : '微信'} · ${list.length} 个会话有记忆`;
+  // 当前选中的会话不属于这个区，就自动切到第一个
+  if (!list.some(s => s.talker === M.talker)) {
+    if (list.length) { memSelect(list[0].talker); return; }
+    M.talker = null; M.detail = null;
+    document.getElementById('mem-detail') && (document.getElementById('mem-detail').innerHTML = '<div class="empty"><span class="big">🧠</span>这个区还没有记忆</div>');
+  }
+  renderMemScopes();
+}
 
 async function loadMemory() {
   const d = await apiSafe('/memory');
@@ -1666,8 +2744,10 @@ async function loadMemory() {
 
   const want = new URLSearchParams(location.search).get('talker');
   if (want && M.scopes.some(s => s.talker === want)) { if (M.talker !== want) await memSelect(want); }
-  else if (!M.talker && M.scopes.length) await memSelect(M.scopes[0].talker);
-  else if (M.talker) await memReload();
+  else if (!M.talker) {
+    const first = M.scopes.find(s => memZoneOf(s.talker) === M.zone) || M.scopes[0];
+    if (first) await memSelect(first.talker);
+  } else if (M.talker) await memReload();
 }
 
 async function memSelect(talker) {
@@ -1679,11 +2759,14 @@ async function memSelect(talker) {
 function renderMemScopes() {
   const el = document.getElementById('mem-scope-list');
   if (!el) return;
-  if (!M.scopes.length) {
-    el.innerHTML = '<div class="empty"><span class="big">🧠</span>还没有记忆<br>聊几句就会自动沉淀</div>';
+  const list = M.scopes.filter(s => memZoneOf(s.talker) === M.zone && (s.total > 0 || s.talker === M.talker));
+  const hint = document.getElementById('mem-zone-hint');
+  if (hint) hint.textContent = `${M.zone === 'qq' ? 'QQ' : '微信'} · ${list.length} 个会话有记忆`;
+  if (!list.length) {
+    el.innerHTML = `<div class="empty"><span class="big">🧠</span>${M.zone === 'qq' ? 'QQ' : '微信'}这边还没有记忆<br>聊几句就会自动沉淀</div>`;
     return;
   }
-  el.innerHTML = M.scopes.map(s => `
+  el.innerHTML = list.map(s => `
     <div class="chat-item ${M.talker === s.talker ? 'active' : ''}" onclick="memSelect('${esc(s.talker)}')">
       <div style="min-width:0">
         <div class="name">${esc(s.name || s.talker)}</div>

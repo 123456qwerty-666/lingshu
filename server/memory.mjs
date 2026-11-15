@@ -128,11 +128,12 @@ export function memoryConfig(config, talker) {
 function scopePath(talker) { return path.join(SCOPE_DIR, `${safeName(talker)}.json`); }
 function archivePath(talker) { return path.join(ARCHIVE_DIR, `${safeName(talker)}.json`); }
 
-function emptyScope(talker, meta = {}) {
+function emptyScope(talker, meta = null) {
+  const m = meta || {};
   return {
     talker,
-    name: meta.name || talker,
-    kind: meta.kind || (String(talker).includes('@chatroom') ? 'group' : 'private'),
+    name: m.name || talker,
+    kind: m.kind || (String(talker).includes('@chatroom') ? 'group' : 'private'),
     createdAt: nowTs(),
     updatedAt: nowTs(),
     chat: [],           // 会话级记忆

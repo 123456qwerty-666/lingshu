@@ -18,6 +18,7 @@ import {
 } from './wechat.mjs';
 import { getAgentWhitelist, ensureWhitelisted, removeWhitelisted, ensureAudioPermission, AUDIO_PLUGIN_ID, conversationKeyOf } from './agent-bridge.mjs';
 import { ai, setConfigSnapshot, endpoint, friendlyAIError } from './ai.mjs';
+import { checkBalance, formatBalance, isDafeiyu, activeProviderId } from './balance.mjs';
 import { router, ChatContext } from './router.mjs';
 import {
   memoryConfig, buildMemoryPrompt, observeTurn, sweepAll, runForgetting, compactScope,
@@ -29,8 +30,19 @@ import { compressContext, contextUsage } from './compressor.mjs';
 import { stripTimeEcho } from './time.mjs';
 import { saveToCache, copyToCache, recordMedia, mergeMediaIntoMessages, pruneCache } from './media-log.mjs';
 import {
+  qqApi, qqLoginInfo, qqFriendList, qqGroupList, sendQQ, sendQQText, sendQQImage,
+  sendQQFace, sendQQRecord, normalizeOneBotEvent, cacheQQMedia, createProactiveEngine, qqVoiceToText,
+} from './qq.mjs';
+import {
+  listMemoryLinks, addMemoryLink, removeMemoryLink, updateMemoryLink, syncAllMemory, broadcastMemory, mirrorTurn,
+  listRooms, createRoom, deleteRoom, updateRoom, addRoomMember, removeRoomMember, syncRoom, syncAllRooms, propagateSettings,
+  createPool, wipeTalker, poolOf,
+  listSchedules, addSchedule, removeSchedule, toggleSchedule, dueSchedules, QQ_EXTENDED_ACTIONS,
+} from './qq-extra.mjs';
+import {
   voiceConfig, transcribe, synthesize, fetchVoiceWav, saveAudioFile,
   trimWav, wavInfo, cleanupAudio, VOICE_CATALOG, voiceCapabilityNote,
+  DOUBAO_EMOTIONS, listSpeakers, addSpeaker, removeSpeaker, cloneDoubaoVoice, doubaoCloneStatus,
 } from './voice.mjs';
 import { listPersonasBrief, getPersona } from './personas.mjs';
 import {
@@ -111,6 +123,33 @@ function collectImagePaths(result) {
   return [...new Set(out)];
 }
 
+// ── 发送层：按平台分流（微信 / QQ） ──────────────────────
+async function dispatchText(msg, text) {
+  if (msg.platform === 'qq') return sendQQText(msg.qqTarget, text, (await loadConfig()).qq);
+  return sendText(msg.talker, text);
+}
+
+async function sendReplyImage(msg, filePath) {
+  if (msg.platform === 'qq') {
+    const cfg = await loadConfig();
+    return sendQQImage(msg.qqTarget, fs.readFileSync(filePath), cfg.qq);
+  }
+  return sendImageFile(msg.talker, filePath);
+}
+
+/** QQ 发真实语音气泡（SILK）；微信只能当音频文件发 */
+async function sendReplyVoice(msg, filePath) {
+  if (msg.platform === 'qq') {
+    const cfg = await loadConfig();
+    const ext = path.extname(filePath).slice(1) || 'wav';
+    await sendQQRecord(msg.qqTarget, fs.readFileSync(filePath), ext, cfg.qq);
+    log(`QQ 语音气泡已发送 → ${msg.qqTarget}`);
+    return filePath;
+  }
+  await sendFileMsg(msg.talker, filePath);
+  return filePath;
+}
+
 // ── 每聊天的有效设置 ──────────────────────────────────────
 function chatSettings(config, talker) {
   const chat = config.chats?.[talker] || {};
@@ -118,8 +157,10 @@ function chatSettings(config, talker) {
   // null = 跟随全局；[] = 该聊天一个插件都不用；[...] = 只用这些
   const pluginFilter = Array.isArray(chat.plugins) ? chat.plugins : globalEnabled;
   const providerId = chat.model?.providerId || config.ai.defaultProvider;
+  // 只选了提供商没选模型时，用该提供商的默认/第一个模型，别把 undefined 丢给接口（会 400）
+  const chatProv = config.ai.providers?.[chat.model?.providerId];
   const modelId = chat.model?.providerId
-    ? (chat.model.modelId || undefined)
+    ? (chat.model.modelId || chatProv?.model || chatProv?.models?.[0]?.id || undefined)
     : (chat.model?.modelId || config.ai.defaultModel || undefined);
 
   let systemPrompt = chat.persona || config.persona?.overrides?.[talker] || config.persona?.default || '';
@@ -136,12 +177,15 @@ function chatSettings(config, talker) {
     memory: memoryConfig(config, talker),
     context: { ...config.context, ...(chat.context || {}) },
     voice: voiceConfig(config, talker),
+    // 识图模型：聊天级优先，没设就跟随全局
+    vision: { ...(config.ai.vision || {}), ...(chat.vision || {}) },
   };
 }
 
 // ── 消息处理主流程 ────────────────────────────────────────
 const processing = new Set(); // talker 级别串行，避免同一聊天并发乱序
 let audioPermissionReady = false;   // 是否已向 WeChatAgent 登记语音读取权限
+let qqProactive = null;              // QQ 主动消息引擎
 const seenRawids = new Map(); // rawid -> ts，SSE 重推 / 图片重试去重
 
 /**
@@ -255,7 +299,9 @@ async function processMessage(msg, config) {
 
   // ── 语音：先转成文字，后面全部按普通文本处理 ──
   const voiceCfg = voiceConfig(config, msg.talker);
-  if (msg.contentType === 34) {
+  // QQ 的语音在 /api/qq/event 入口就已经下载并转成文字了（msg.text 形如「[语音] 内容」），
+  // 这里不能再走一遍，否则会被当成「未识别的占位」把文字覆盖掉。
+  if (msg.contentType === 34 && msg.platform !== 'qq') {
     // 读取器给的占位文案有几种："[语音]"、"[语音，尚未转写]" 等
     const rawText = String(msg.text || '').trim();
     const isPlaceholder = !rawText || /^[\[【]?\s*语音/.test(rawText);
@@ -292,22 +338,58 @@ async function processMessage(msg, config) {
       } catch (e) {
         log(`语音转文字失败: ${e.message}`, 'warn');
         if (isPlaceholder) {
-          msg.text = '[对方发来一条语音，但本地转写失败了；可以礼貌地请对方再发一次或直接打字]';
+          msg.text = '[对方发来一条语音，但内容没能识别出来]';
         }
       }
     } else if (isPlaceholder) {
       msg.text = voiceCfg.asrEnabled
-        ? '[对方发来一条语音，但还没配置语音识别模型，请提示用户去「AI 配置 → 语音」里配一下]'
+        ? '[对方发来一条语音，但内容没能识别出来]'
         : '[对方发来一条语音（该聊天未开启语音识别）]';
     }
   }
 
-  // 告诉模型「你有嘴」，否则它不会主动用 send_voice
+  // 平台感知：让 AI 清楚自己现在在微信还是 QQ，聊天时可以说出来
+  if (msg.platform === 'qq') {
+    settings.systemPrompt += '\n\n【当前平台】你正在 QQ 上和对方聊天，不是微信。'
+      + '对方问起或语境合适时，可以自然提一句「QQ 这边」「我在 QQ 上」。'
+      + 'QQ 能发真实语音气泡、表情包、图片，别再说「只能发文件」。';
+  } else {
+    settings.systemPrompt += '\n\n【当前平台】你正在微信上和对方聊天，不是 QQ。'
+      + '对方问起或语境合适时，可以自然提一句「微信上」「我这边微信」。'
+      + '微信目前只能把音频当文件发，不要说成语音气泡。';
+  }
+
+  // 大肥鱼 + DeepSeek：让它知道自己的「饭钱」（API 余额）
+  try {
+    const pid = activeProviderId(config, msg.talker);
+    if (isDafeiyu(config, msg.talker) && /deepseek/i.test(pid)) {
+      const b = await checkBalance(pid);
+      if (b.ok) {
+        settings.systemPrompt += `\n\n【你的饭钱】你（大肥鱼）现在还剩 ${b.total?.toFixed(2) ?? '未知'} 元 API 余额——这就是你的「饭钱」。`
+          + '有人问起你的饭钱/还剩多少/还够聊多久，就照这个数回答，别说不知道，也别编大数字。'
+          + '余额见底时可以顺势卖个惨、催对方充值，符合你的性格。'
+          + `（数据由系统自动查询，5 分钟更新一次；需要最新数字可以调用 check_api_balance。）`;
+      }
+    }
+  } catch { /* 余额查不到就不注入 */ }
+
+
   if (voiceCfg.enabled && voiceCfg.ttsConfigured) {
     settings.systemPrompt += '\n\n【语音】你能用 send_voice 把话念出来发给对方。'
       + '对方让你唱歌、要求用语音说、或者你想用语气表达情绪时，就调用它。'
       + 'text 只写要念出来的字，可以带语气词（唉、哈哈）和停顿「……」；不要写旁白或括号动作。'
-      + '发完用一句话告诉对方已经发了，别把内容重复一遍。';
+      + '发完用一句话告诉对方已经发了，别把内容重复一遍。'
+      + '**只有 send_voice 真的调用成功才能说「已经发给你了」**；没调用就绝不能说发了，否则对方会一直等一条不存在的语音。';
+    // 豆包支持逐句情绪：教模型在每句话后面打标签
+    if (voiceCfg.tts.protocol === 'doubao') {
+      settings.systemPrompt += '\n【语音脚本的情绪】写 send_voice 的 text 时，'
+        + '**每句话后面用方括号标一个情绪**，不同句子可以不一样。'
+        + `可用情绪：${DOUBAO_EMOTIONS.map(e => `${e.label}(${e.id})`).join('、')}。`
+        + '例如：我饿了[伤心]。不过我现在有钱了[开心]。你说吃什么好呢[兴奋]。'
+        + '标签会按句切开分别合成，所以每句都要有自己的标签；'
+        + '一句话里别塞两个情绪。整段实在只有一个情绪时，写一个标签就够了。'
+        + '标签不会被念出来，也不要在正文里解释你标了什么。';
+    }
   }
 
   // ── 记忆：想起旧事，拼进系统提示词 ──
@@ -363,9 +445,87 @@ async function processMessage(msg, config) {
   }
 
   const tools = getToolList(settings.pluginFilter);
+  // 这些是运行时临时加的工具（不经过插件注册表），必须单独登记，
+  // 否则 AI 调用时会报「未找到工具」
+  const dynamicTools = new Map();
+  const addTool = (def) => { tools.push(def); dynamicTools.set(def.name, def); return def; };
+  addTool({
+    name: 'check_api_balance',
+    description: '查询当前 AI 提供商的 API 余额。用户问「还剩多少钱」「饭钱还有多少」「余额够不够」时调用。',
+    parameters: { type: 'object', properties: {}, required: [] },
+    run: async () => {
+      const pid = activeProviderId(config, msg.talker);
+      const b = await checkBalance(pid);
+      return { ok: b.ok, provider: pid, balance: b, text: formatBalance(b, { dafeiyu: isDafeiyu(config, msg.talker) }) };
+    },
+  });
+  // QQ 通道：让 AI 能主动操作 QQ（发消息、发图、点赞、改签名、发动态…）
+  if (msg.platform === 'qq' && config.qq?.enabled && config.qq?.aiActions?.enabled !== false) {
+    const allowHigh = config.qq?.aiActions?.allowHighRisk === true;
+    const usable = QQ_EXTENDED_ACTIONS.filter(a => a.ok !== false && (allowHigh || a.risk !== 'high'));
+    addTool({
+      name: 'qq_action',
+      description: `操作 QQ。可用动作：${usable.map(a => `${a.action}(${a.label}，参数 ${a.params})`).join('；')}。`
+        + '直接发消息用 send_qq_message，不要用它。高风险动作需要用户单独开启。',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', description: '动作名' },
+          params: { type: 'object', description: '该动作的参数，见动作说明' },
+          target: { type: 'string', description: '可选，私聊/群目标，格式 private:QQ号 或 group:群号' },
+          text: { type: 'string', description: '可选，要发送的文字' },
+        },
+        required: ['action'],
+      },
+      run: async (args) => {
+        const act = String(args?.action || '');
+        log(`AI 请求 QQ 动作: ${act} | 参数: ${JSON.stringify(args?.params || {}).slice(0, 120)}`);
+        if (!usable.some(a => a.action === act)) throw new Error(`动作「${act}」未开放，可用：${usable.map(x => x.action).join('/')}`);
+        const params = { ...(args?.params || {}) };
+        if (args?.target) {
+          const [kind, id] = String(args.target).split(':');
+          params[kind === 'group' ? 'group_id' : 'user_id'] = Number(id);
+        }
+        if (args?.text) params.message = params.message || args.text;
+        try {
+          const r = await qqApi(act, params, config.qq);
+          log(`AI 执行 QQ 动作 ${act} 成功`);
+          return { ok: true, action: act, result: r };
+        } catch (e) {
+          log(`AI 执行 QQ 动作 ${act} 失败: ${e.message}`, 'warn');
+          return { ok: false, action: act, error: e.message };
+        }
+      },
+    });
+    addTool({
+      name: 'send_qq_message',
+      description: '主动给某个 QQ 好友或群发消息（文字/图片/表情）。不需要别人先说话也能发。',
+      parameters: {
+        type: 'object',
+        properties: {
+          target: { type: 'string', description: 'private:QQ号 或 group:群号' },
+          text: { type: 'string', description: '要发的内容' },
+          faceId: { type: 'number', description: '可选，附带一个 QQ 表情 ID' },
+        },
+        required: ['target', 'text'],
+      },
+      run: async (args) => {
+        const target = String(args?.target || msg.qqTarget || '');
+        const [kind, id] = target.split(':');
+        if (!Number.isFinite(Number(id))) throw new Error('目标格式不对');
+        const segs = [{ type: 'text', data: { text: String(args.text || '') } }];
+        if (args?.faceId) segs.push({ type: 'face', data: { id: String(args.faceId) } });
+        const key = kind === 'group' ? 'group_id' : 'user_id';
+        const r = await qqApi(kind === 'group' ? 'send_group_msg' : 'send_private_msg',
+          { [key]: Number(id), message: segs }, config.qq);
+        log(`AI 主动发 QQ 消息 → ${target}`);
+        return { ok: true, result: r };
+      },
+    });
+  }
   // 内置语音工具：让模型自己决定「这条要不要用语音」
   if (voiceCfg.ttsConfigured && voiceCfg.enabled) {
-    tools.push({
+    addTool({
       name: 'send_voice',
       pluginId: 'builtin-voice',
       description: '把一段话合成语音，以音频文件发给对方。适合：对方让你唱歌/说一遍/用语音、你需要用语气表达情绪、或者内容本身适合念出来。'
@@ -374,8 +534,16 @@ async function processMessage(msg, config) {
       parameters: {
         type: 'object',
         properties: {
-          text: { type: 'string', description: '要念出来的内容，不要带解释或旁白' },
-          voice: { type: 'string', description: '可选音色 id，留空用默认音色' },
+          text: { type: 'string', description: '要念的内容。豆包支持逐句情绪：在每句话后面加 [情绪] 标签，如「我饿了[伤心]。现在有钱了[开心]。」标签不会被念出来' },
+          voice: { type: 'string', description: '可选音色（名字或 ID），留空用当前聊天设置的音色' },
+          emotion: {
+            type: 'string',
+            description: `可选情绪（豆包多情感音色支持）：${DOUBAO_EMOTIONS.map(e => e.id).join(' / ')}`,
+          },
+          emotionScale: {
+            type: 'number',
+            description: '情绪强度 1~5，越大越明显（默认 4），需配合 emotion 使用',
+          },
         },
         required: ['text'],
       },
@@ -395,6 +563,19 @@ async function processMessage(msg, config) {
       maxRounds: 4,
       onLog: (m, lvl) => log(m, lvl || 'info'),
       callTool: async (name, args) => {
+        // 先查运行时临时注册的工具（qq_action / send_qq_message 等），
+        // 它们不在插件表里，否则会报「未找到工具」
+        const dyn = dynamicTools.get(name);
+        if (dyn) {
+          try {
+            const r = await dyn.run(args);
+            if (r && r.ok === false) log(`工具 ${name} 返回失败: ${String(r.error || '').slice(0, 120)}`, 'warn');
+            return r;
+          } catch (e) {
+            log(`工具 ${name} 执行失败: ${e.message}`, 'warn');
+            return { ok: false, error: e.message };
+          }
+        }
         if (name === 'send_voice') {
           return sendVoiceTool(args, msg, config, sentVoicePaths);
         }
@@ -410,7 +591,7 @@ async function processMessage(msg, config) {
           const paths = collectImagePaths(toolResult);
           for (const p of paths) {
             try {
-              await sendImageFile(msg.talker, p);
+              await sendReplyImage(msg, p);
               sentImagePaths.push(p);
               // 留底：原文件马上会被删，控制台需要一份能显示的副本
               try {
@@ -466,35 +647,18 @@ async function processMessage(msg, config) {
   const parts = replyText.trim() ? router.splitReply(replyText, config) : [];
 
   // ── 语音合成：把回复念成音频，以音频文件发出 ──
-  let voicePath = '';
-  if (replyText.trim() && voiceCfg.ttsConfigured && voiceCfg.sendMode !== 'off') {
-    const wantVoice = voiceCfg.sendMode !== 'random'
-      ? true
-      : Math.random() < voiceCfg.randomRate;
-    if (wantVoice) {
-      try {
-        const tts = await synthesize(replyText, { config, talker: msg.talker, onLog: (m) => log(m, 'debug') });
-        const info = wavInfo(tts.buffer);
-        const dur = info?.durationSeconds || 0;
-        const limit = voiceCfg.maxSeconds || 0;
-        if (limit > 0 && dur > limit) {
-          log(`语音合成 ${dur.toFixed(1)}s 超过 ${limit}s 上限，不发送`, 'warn');
-        } else {
-          voicePath = saveAudioFile(tts.buffer, tts.ext, 'reply');
-          log(`语音合成完成：${dur ? dur.toFixed(1) + 's' : '时长未知'} · 音色 ${tts.voice}`);
-        }
-      } catch (e) {
-        log(`语音合成失败: ${e.message}`, 'warn');
-      }
-    }
-  }
+  // 注意顺序：先把文字发出去，再做语音。豆包这类耗时几秒到十几秒、复刻训练要几分钟的模型
+  // 如果挡在文字前面，对方会干等到以为死机。
+  const wantVoice = Boolean(replyText.trim() && voiceCfg.ttsConfigured && voiceCfg.sendMode !== 'off')
+    && (voiceCfg.sendMode !== 'random' || Math.random() < voiceCfg.randomRate);
 
-  const textParts = (voiceCfg.sendMode === 'onlyVoice' && voicePath) ? [] : parts;
+  const onlyVoice = voiceCfg.sendMode === 'onlyVoice' && wantVoice;
+  const textParts = onlyVoice ? [] : parts;
 
   if (textParts.length) {
     for (let i = 0; i < textParts.length; i++) {
       try {
-        await sendText(msg.talker, textParts[i]);
+        await dispatchText(msg, textParts[i]);
       } catch (e) {
         log(`发送失败: ${e.message}`, 'error');
         break;
@@ -504,24 +668,19 @@ async function processMessage(msg, config) {
   }
 
   let voiceSent = 0;
-  if (voicePath) {
-    try {
-      await sendFileMsg(msg.talker, voicePath);
-      voiceSent = 1;
-      try {
-        const cacheFile = copyToCache(voicePath, { tag: 'voice-out' });
-        recordMedia(msg.talker, {
-          dir: 'out', kind: 'voice', file: cacheFile, ts: Date.now(),
-          duration: wavInfo(fs.readFileSync(voicePath))?.durationSeconds || null,
-          text: replyText,
-        });
-      } catch { /* ignore */ }
-    } catch (e) {
-      log(`语音文件发送失败: ${e.message}`, 'warn');
-      // 只发语音的场合，声音发不出去就把文字补上，别让对方干等
-      if (!textParts.length) {
-        for (const p of parts) { try { await sendText(msg.talker, p); } catch { /* ignore */ } }
+  if (wantVoice) {
+    if (onlyVoice) {
+      // 只发语音：必须等结果；失败就兜底发文字
+      voiceSent = (await synthAndSendVoice(msg, replyText, config, voiceCfg)) ? 1 : 0;
+      if (!voiceSent && parts.length) {
+        log('只发语音但合成失败，已兜底发送文字', 'warn');
+        for (const p of parts) { try { await dispatchText(msg, p); } catch { /* ignore */ } }
       }
+    } else {
+      // 文字已经发出去了，语音在后台慢慢合成，
+      // 否则会把后续消息和处理队列一起堵住
+      synthAndSendVoice(msg, replyText, config, voiceCfg)
+        .catch(e => log(`后台语音失败: ${e.message}`, 'warn'));
     }
   }
 
@@ -529,9 +688,26 @@ async function processMessage(msg, config) {
     log(`已回复 ${msg.talker}（${textParts.length} 条${voiceSent || sentVoicePaths.length ? `，${voiceSent + sentVoicePaths.length} 条语音` : ''}${sentImagePaths.length ? `，${sentImagePaths.length} 张图` : ''}${toolRuns.length ? `，${toolRuns.length} 次工具` : ''}）`);
   }
 
-  // ── 记忆沉淀（异步，不阻塞回复）──
+  // ── 实时镜像 + 记忆沉淀（异步，不阻塞回复）──
+  // 微信这边说一句，立刻写进绑定的 QQ 会话历史，反之亦然
+  (async () => {
+    try {
+      const mirrored = await mirrorTurn(msg.talker, { userText: msg.text || '', aiText: replyText || '' });
+      if (mirrored.length) log(`实时镜像：${msg.talker} → ${mirrored.join('、')}（用户+AI 共 2 条）`, 'debug');
+    } catch (e) { log(`实时镜像失败: ${e.message}`, 'warn'); }
+  })();
+
   if (settings.memory?.enabled && settings.memory?.autoTag) {
-    afterTurnMemory(msg, config, context, replyText).catch(e => log(`记忆沉淀失败: ${e.message}`, 'warn'));
+    afterTurnMemory(msg, config, context, replyText)
+      .then(() => {
+        // 记忆沉淀完，把新记忆推给绑定的另一端（微信 ↔ QQ 互通）
+        try {
+          const pushed = broadcastMemory(msg.talker);
+          const n = pushed.reduce((s, x) => s + x.added, 0);
+          if (n) log(`记忆同步：${msg.talker} → ${pushed.length} 个会话，新增 ${n} 条`);
+        } catch (e) { log(`记忆同步失败: ${e.message}`, 'warn'); }
+      })
+      .catch(e => log(`记忆沉淀失败: ${e.message}`, 'warn'));
   }
 
   return { ok: true, parts: parts.length, images: sentImagePaths.length, tools: toolRuns.map(t => t.name), memories: memoryUsed.length };
@@ -580,6 +756,33 @@ async function afterTurnMemory(msg, config, context, replyText) {
   }
 }
 
+/** 自动语音：合成 → 落盘 → 发文件 → 记媒体。返回是否真的发出去了 */
+async function synthAndSendVoice(msg, text, config, voiceCfg) {
+  try {
+    const tts = await synthesize(text, { config, talker: msg.talker, onLog: (m) => log(m, 'debug') });
+    const info = wavInfo(tts.buffer);
+    const dur = info?.durationSeconds || 0;
+    const limit = voiceCfg.maxSeconds || 0;
+    if (limit > 0 && dur > limit) {
+      log(`语音合成 ${dur.toFixed(1)}s 超过 ${limit}s 上限，不发送`, 'warn');
+      return false;
+    }
+    const fp = saveAudioFile(tts.buffer, tts.ext, 'reply');
+    await sendReplyVoice(msg, fp);
+    log(`语音已发送：${dur ? dur.toFixed(1) + 's' : '时长未知'} · 音色 ${tts.voice} → ${msg.talker}`);
+    try {
+      const cacheFile = copyToCache(fp, { tag: 'voice-out' });
+      recordMedia(msg.talker, {
+        dir: 'out', kind: 'voice', file: cacheFile, ts: Date.now(), duration: dur || null, text,
+      });
+    } catch { /* ignore */ }
+    return true;
+  } catch (e) {
+    log(`语音合成/发送失败: ${e.message}`, 'warn');
+    return false;
+  }
+}
+
 /** 模型主动发语音：合成 → 落盘 → 发文件。不设时长上限（文件不受语音 60 秒限制） */
 async function sendVoiceTool(args, msg, config, sink) {
   const text = String(args?.text || '').trim();
@@ -589,12 +792,14 @@ async function sendVoiceTool(args, msg, config, sink) {
       config,
       talker: msg.talker,
       voice: args?.voice || null,
+      emotion: args?.emotion || null,
+      emotionScale: args?.emotionScale ?? null,
       onLog: (m) => log(m, 'debug'),
     });
     if (!tts.buffer?.length) return { success: false, error: '合成结果是空音频' };
     const info = wavInfo(tts.buffer);
     const fp = saveAudioFile(tts.buffer, tts.ext, 'ai');
-    await sendFileMsg(msg.talker, fp);
+    await sendReplyVoice(msg, fp);
     sink.push(fp);
     try {
       const cacheFile = copyToCache(fp, { tag: 'voice-out' });
@@ -745,8 +950,10 @@ async function describeImages(imageIds, { msg, config }) {
   const reader = getReader();
   if (!reader) return { ok: false, reason: '读取器未连接' };
 
-  const vp = config.ai.vision?.providerId || config.ai.defaultProvider;
-  const vm = config.ai.vision?.modelId || config.ai.defaultModel || undefined;
+  // 这个聊天单独指定的识图模型优先，否则跟随全局
+  const chatVision = config.chats?.[msg?.talker]?.vision || {};
+  const vp = chatVision.providerId || config.ai.vision?.providerId || config.ai.defaultProvider;
+  const vm = chatVision.modelId || config.ai.vision?.modelId || config.ai.defaultModel || undefined;
   const descriptions = [];
   let okCount = 0;
 
@@ -804,6 +1011,38 @@ function injectImageDescriptions(messages, descriptions, { isSticker }) {
   return out;
 }
 
+
+/** QQ 图片 → 文字描述（走识图模型，和微信那条链路口径一致） */
+async function qqImageToText(url, { config, talker = null, isSticker = false } = {}) {
+  if (!url) throw new Error('没有图片地址');
+  const chatVision = config.chats?.[talker]?.vision || {};
+  const vp = chatVision.providerId || config.ai.vision?.providerId || config.ai.defaultProvider;
+  const vm = chatVision.modelId || config.ai.vision?.modelId || config.ai.defaultModel || undefined;
+
+  const resp = await fetch(url, { signal: AbortSignal.timeout(30000) });
+  if (!resp.ok) throw new Error(`下载图片失败 HTTP ${resp.status}`);
+  const buf = Buffer.from(await resp.arrayBuffer());
+  if (!buf.length) throw new Error('图片内容为空');
+  const mime = (resp.headers.get('content-type') || '').split(';')[0] || 'image/jpeg';
+  const dataUrl = `data:${mime};base64,${buf.toString('base64')}`;
+
+  const r = await ai.chat([
+    {
+      role: 'system',
+      content: isSticker
+        ? '你是表情包描述器。用一句中文说清这个表情想表达什么情绪或意思，20 字内，不要评价画质。'
+        : '你是图片描述器。客观描述画面内容：主体、动作、场景、以及图上的文字。中文，80 字内，不要编造看不见的细节。',
+    },
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: isSticker ? '这个表情是什么意思？' : '描述这张图片。' },
+        { type: 'image_url', image_url: { url: dataUrl } },
+      ],
+    },
+  ], { providerId: vp, modelOverride: vm, maxTokens: 300, temperature: 0.3 });
+  return String(r?.content || '').trim();
+}
 
 // ── HTTP 路由 ─────────────────────────────────────────────
 async function serveStatic(res, urlPath) {
@@ -870,6 +1109,14 @@ async function route(req, res) {
   if (method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
   // ── 健康 / 状态 ──
+  if (p === '/api/ai/balance' && method === 'GET') {
+    const cfg = await loadConfig();
+    const pid = url.searchParams.get('provider') || cfg.ai?.defaultProvider;
+    const b = await checkBalance(pid, { force: url.searchParams.get('force') === '1' });
+    sendJson(res, 200, { ...b, text: formatBalance(b, { dafeiyu: false }) });
+    return;
+  }
+
   if (p === '/api/health' && method === 'GET') {
     const readerInfo = await refreshReaderStatus();
     sendJson(res, 200, {
@@ -997,13 +1244,17 @@ async function route(req, res) {
   if (p === '/api/chats' && method === 'GET') {
     const cfg = await loadConfig();
     const agent = getAgentWhitelist();
-    const list = Object.entries(cfg.chats || {}).map(([talker, c]) => ({
+    const all = Object.entries(cfg.chats || {}).map(([talker, c]) => ({
       talker,
       ...c,
+      platform: String(talker).startsWith('qq:') ? 'qq' : 'wx',
       context: new ChatContext(talker).stats(),
       settings: chatSettings(cfg, talker),
     }));
-    sendJson(res, 200, { chats: list, agentWhitelist: agent });
+    // QQ 会话单独一组，别混进微信列表
+    const chats = all.filter(c => c.platform === 'wx');
+    const qqChats = all.filter(c => c.platform === 'qq');
+    sendJson(res, 200, { chats, qqChats, agentWhitelist: agent });
     return;
   }
 
@@ -1102,7 +1353,11 @@ async function route(req, res) {
     if (patch.persona !== undefined && patch.persona !== current.persona) merged.personaId = null;
     await saveConfig({ chats: { [talker]: merged } });
     log(`更新聊天设置: ${talker}`);
-    sendJson(res, 200, { ok: true, chat: merged });
+    // 同一聊天室里的其它端跟着改（微信改 → QQ 也改，反之亦然）
+    let propagated = 0;
+    try { propagated = await propagateSettings(talker); } catch (e) { log(`设置同步失败: ${e.message}`, 'warn'); }
+    if (propagated) log(`设置已同步到同聊天室 ${propagated} 项`);
+    sendJson(res, 200, { ok: true, chat: merged, propagated });
     return;
   }
 
@@ -1114,6 +1369,233 @@ async function route(req, res) {
   }
 
   // ── 一键接入 DeepSeek（填 Key 就能用）──
+  // ── QQ 通道（NapCatQQ / OneBot 11）─────────────────────
+  // NapCat 的「HTTP 客户端」把事件 POST 到这里
+  if (p === '/api/qq/event' && method === 'POST') {
+    const cfg = await loadConfig();
+    if (!cfg.qq?.enabled) { sendJson(res, 200, { ok: false, reason: 'qq_disabled' }); return; }
+    let raw = null;
+    try { raw = await readJsonBody(req); } catch (e) { sendJson(res, 400, { error: e.message }); return; }
+    const ev = normalizeOneBotEvent(raw);
+    if (!ev) { sendJson(res, 200, { ok: true, ignored: true }); return; }
+    // 媒体：缓存到本地 + 转成 AI 能理解的文字
+    // QQ 的消息段不会进 msg.images/msg.voice，所以这里必须自己把内容补进 ev.content
+    const pushLine = (t) => { ev.content = ev.content ? `${ev.content} ${t}` : t; };
+    for (const m of ev.qqMedia || []) {
+      // 1) 先缓存（控制台能直接看/听），失败不影响识别
+      let savedAbs = '';
+      if (m.url) {
+        try {
+          const rel = await cacheQQMedia(m.url, m.type === 'record' ? 'voice-in' : 'image-in');
+          if (rel) savedAbs = path.join(MEDIA_DIR, rel);
+          recordMedia(ev.sessionId, {
+            dir: 'in', kind: m.type === 'record' ? 'voice' : m.type === 'image' ? 'image' : 'file',
+            file: rel, ts: ev.timestamp * 1000,
+          });
+        } catch (e) { log(`QQ 媒体缓存失败: ${e.message}`, 'warn'); }
+      }
+
+      // 2) 语音 → 文字
+      if (m.type === 'record') {
+        if (!m.url) { pushLine('[对方发来一条语音，但没拿到音频地址]'); continue; }
+        const vc = voiceConfig(cfg, ev.sessionId);
+        if (!vc.asrEnabled || !vc.asrConfigured) {
+          log('收到 QQ 语音，但还没配置语音识别模型（去「AI 配置 → 语音」里选一个）', 'warn');
+          pushLine('[对方发来一条语音，但内容没能识别出来]');
+          continue;
+        }
+        try {
+          const r = await qqVoiceToText(m.url, {
+            cfg: cfg.qq, talker: ev.sessionId, transcribe,
+            log: (msg, lvl) => log(msg, lvl || 'debug'),
+          });
+          if (r.text) {
+            pushLine(`[语音] ${r.text}`);
+            log(`QQ 语音转文字：${r.text.slice(0, 50)}`);
+          } else {
+            log(`QQ 语音没转出文字：${r.reason || '内容为空或太短'}`, 'warn');
+            pushLine('[对方发来一条语音，但内容没能识别出来]');
+          }
+        } catch (e) {
+          log(`QQ 语音转文字失败: ${e.message}`, 'warn');
+          pushLine('[对方发来一条语音，但内容没能识别出来]');
+        }
+        continue;
+      }
+
+      // 3) 图片 / 表情包 → 识图模型描述成文字
+      if (m.type === 'image') {
+        if (!m.url) { pushLine('[对方发来一张图片，但没拿到图片地址]'); continue; }
+        try {
+          const desc = await qqImageToText(m.url, { config: cfg, talker: ev.sessionId, isSticker: false });
+          if (desc) {
+            pushLine(`[图片] ${desc}${savedAbs ? `（原图已保存：${savedAbs}，需要换头像等操作时可直接用这个路径）` : ''}`);
+            log(`QQ 图片已识别：${desc.slice(0, 50)}`);
+          } else {
+            pushLine('[对方发来一张图片，但没读出内容]');
+          }
+        } catch (e) {
+          log(`QQ 识图失败: ${e.message}`, 'warn');
+          pushLine(`[对方发来一张图片，但没读出来（${String(e.message).slice(0, 40)}）]`);
+        }
+        continue;
+      }
+
+      // 4) 文件 / 视频只给个说明，至少让 AI 知道对方发了东西
+      if (m.type === 'file') { pushLine(`[文件] ${m.name || '对方发来一个文件'}`); continue; }
+      if (m.type === 'video') { pushLine('[视频] 对方发来一段视频'); continue; }
+    }
+    qqProactive?.mark(ev.qqTarget);
+    try {
+      const r = await handleIncoming(ev, { source: 'qq', force: true });
+      sendJson(res, 200, { ok: true, result: r });
+    } catch (e) { sendJson(res, 500, { error: e.message }); }
+    return;
+  }
+
+  // QQ 会话历史：NapCat 实时消息（区分自己/对方）+ 灵枢 AI 回复（去重）
+  if (p === '/api/qq/history' && method === 'GET') {
+    const target = url.searchParams.get('target') || '';
+    const count = Math.min(Number(url.searchParams.get('count')) || 40, 100);
+    const cfg = await loadConfig();
+    if (!cfg.qq?.enabled) { sendJson(res, 200, { messages: [] }); return; }
+    const idx = target.indexOf(':');
+    if (idx < 0) { sendJson(res, 400, { error: 'target 格式应为 private:QQ号 或 group:群号' }); return; }
+    const kind = target.slice(0, idx);
+    const numId = Number(target.slice(idx + 1));
+    if (!Number.isFinite(numId)) { sendJson(res, 400, { error: 'target 里的号码不对' }); return; }
+
+    // 先认自己是谁，否则自己发的消息会被当成对方
+    let selfId = Number(cfg.qq?.selfUin) || 0;
+    if (!selfId) {
+      try { const me = await qqLoginInfo(cfg.qq); selfId = Number(me?.user_id) || 0; } catch { /* ignore */ }
+    }
+
+    const out = [];
+    try {
+      const r = await qqApi(kind === 'group' ? 'get_group_msg_history' : 'get_friend_msg_history',
+        { [kind === 'group' ? 'group_id' : 'user_id']: numId, count }, cfg.qq);
+      for (const m of (r?.messages || [])) {
+        const text = (m.message || []).map(x => {
+          if (x.type === 'text') return x.data?.text || '';
+          if (x.type === 'face') return '[表情]';
+          if (x.type === 'image') return '[图片]';
+          if (x.type === 'record') return '[语音]';
+          if (x.type === 'video') return '[视频]';
+          if (x.type === 'file') return '[文件]';
+          if (x.type === 'reply') return '[回复]';
+          if (x.type === 'at') return '@' + (x.data?.qq || '');
+          return '';
+        }).join('').trim();
+        if (!text) continue;
+        const fromSelf = Boolean(selfId) && Number(m.sender?.user_id) === selfId;
+        out.push({
+          role: fromSelf ? 'assistant' : 'user',
+          content: text,
+          ts: (Number(m.time) || 0) * 1000,
+          sender: fromSelf ? '我' : (m.sender?.card || m.sender?.nickname || String(m.sender?.user_id || '')),
+          platform: 'qq',
+        });
+      }
+    } catch (e) {
+      log('QQ 历史读取失败: ' + e.message, 'debug');
+    }
+
+    // 灵枢这边 AI 的回复（客户端历史里不一定有，且避免与上面重复）
+    const seen = new Set(out.map(m => m.role + '|' + m.content));
+    try {
+      const ctx = new ChatContext('qq:' + target);
+      for (const m of ctx.getMessages(count)) {
+        if (m.role === 'system' || m.mirrored) continue;
+        const role = m.role === 'assistant' ? 'assistant' : 'user';
+        const content = String(m.content || '').trim();
+        if (!content) continue;
+        const key = role + '|' + content;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ role, content, ts: Number(m.ts) || 0, sender: role === 'assistant' ? 'AI' : '', platform: 'ai' });
+      }
+    } catch { /* ignore */ }
+
+    out.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+    sendJson(res, 200, { target, selfId, messages: out.slice(-count) });
+    return;
+  }
+
+  if (p === '/api/qq/status' && method === 'GET') {
+    const cfg = await loadConfig();
+    if (!cfg.qq?.enabled) { sendJson(res, 200, { enabled: false, online: false }); return; }
+    try {
+      const info = await qqLoginInfo(cfg.qq);
+      sendJson(res, 200, { enabled: true, online: true, account: info, httpUrl: cfg.qq.httpUrl });
+    } catch (e) {
+      sendJson(res, 200, { enabled: true, online: false, error: e.message, httpUrl: cfg.qq.httpUrl });
+    }
+    return;
+  }
+
+  if (p === '/api/qq/chats' && method === 'GET') {
+    const cfg = await loadConfig();
+    if (!cfg.qq?.enabled) { sendJson(res, 200, { chats: [], reason: 'disabled' }); return; }
+    try {
+      const [friends, groups] = await Promise.all([qqFriendList(cfg.qq), qqGroupList(cfg.qq)]);
+      const chats = [
+        ...friends.map(f => ({ talker: `qq:private:${f.user_id}`, name: f.nickname || String(f.user_id), kind: 'private', id: f.user_id })),
+        ...groups.map(g => ({ talker: `qq:group:${g.group_id}`, name: g.group_name || String(g.group_id), kind: 'group', id: g.group_id })),
+      ];
+      sendJson(res, 200, { chats });
+    } catch (e) {
+      // NapCat 没启动 / 还没扫码登录时不要刷 500，控制台会显示提示
+      sendJson(res, 200, { chats: [], reason: 'offline', error: e.message });
+    }
+    return;
+  }
+
+  if (p === '/api/qq/config' && method === 'POST') {
+    const b = await readJsonBody(req);
+    try {
+      await saveConfig({ qq: b.qq || b });
+      log('QQ 通道配置已更新');
+      sendJson(res, 200, { ok: true });
+    } catch (e) { sendJson(res, 500, { error: e.message }); }
+    return;
+  }
+
+  // 控制台里手动发：text / image / record / face
+  if (p === '/api/qq/send' && method === 'POST') {
+    const b = await readJsonBody(req);
+    const cfg = await loadConfig();
+    if (!cfg.qq?.enabled) { sendJson(res, 400, { error: 'QQ 通道未启用' }); return; }
+    try {
+      let r;
+      const target = b.target;
+      if (b.type === 'face') r = await sendQQFace(target, b.id, cfg.qq);
+      else if (b.type === 'image' && b.audioBase64) r = await sendQQImage(target, Buffer.from(b.audioBase64, 'base64'), cfg.qq);
+      else if (b.type === 'record' && b.audioBase64) {
+        const buf = Buffer.from(b.audioBase64, 'base64');
+        r = await sendQQRecord(target, buf, b.ext || 'wav', cfg.qq);
+      } else r = await sendQQText(target, String(b.text || ''), cfg.qq);
+      log(`QQ 已发送 → ${target}`);
+      sendJson(res, 200, { ok: true, result: r });
+    } catch (e) { sendJson(res, 500, { error: e.message }); }
+    return;
+  }
+
+  // 试发一条真实语音气泡（本地合成一小段，验证 SILK 链路）
+  if (p === '/api/qq/test/voice' && method === 'POST') {
+    const b = await readJsonBody(req);
+    const cfg = await loadConfig();
+    try {
+      const tts = await synthesize(String(b.text || '这是一条 QQ 真实语音测试。'), {
+        config: cfg, talker: b.talker || null, onLog: (m) => log(m, 'debug'),
+      });
+      await sendQQRecord(b.target, tts.buffer, tts.ext, cfg.qq);
+      log(`QQ 语音气泡测试成功 → ${b.target}`);
+      sendJson(res, 200, { ok: true, bytes: tts.buffer.length, ext: tts.ext });
+    } catch (e) { sendJson(res, 500, { error: e.message }); }
+    return;
+  }
+
   // ── 语音 ──────────────────────────────────────────────
   if (p === '/api/voice/catalog' && method === 'GET') {
     const cfg = await loadConfig();
@@ -1122,6 +1604,7 @@ async function route(req, res) {
       catalog: VOICE_CATALOG,
       config: talker ? voiceConfig(cfg, talker) : (cfg.voice || {}),
       note: voiceCapabilityNote(),
+      emotions: DOUBAO_EMOTIONS,
       providers: Object.entries(cfg.ai.providers || {}).map(([id, p]) => ({ id, name: p.name || id })),
     });
     return;
@@ -1136,6 +1619,271 @@ async function route(req, res) {
     return;
   }
 
+  // 一键接入豆包：写提供商 + 切协议 + 默认用「威龙」
+  if (p === '/api/voice/doubao/provider' && method === 'POST') {
+    const b = await readJsonBody(req);
+    const apiKey = String(b.apiKey || '').trim();
+    if (!apiKey) { sendJson(res, 400, { error: '请填写豆包 API Key' }); return; }
+    const id = 'doubao';
+    const baseUrl = String(b.baseUrl || 'https://openspeech.bytedance.com').replace(/\/+$/, '');
+    try {
+      await saveConfig({ ai: { providers: { [id]: {
+        name: '豆包语音',
+        baseUrl,
+        apiKey,
+        models: [],
+        voiceOnly: true,           // 只做语音，不进对话模型的降级链
+        voiceProtocol: 'doubao',
+      } } } });
+      await saveConfig({ voice: { enabled: true, tts: {
+        enabled: true, providerId: id, protocol: 'doubao', voice: b.voice || 'S_kDqSH3h12', modelId: '', format: 'mp3',
+      } } });
+      log(`已接入豆包语音：${baseUrl}`);
+      sendJson(res, 200, { ok: true, providerId: id, baseUrl });
+    } catch (e) { sendJson(res, 500, { error: e.message }); }
+    return;
+  }
+
+  // ── 豆包：音色库 / 复刻 ─────────────────────────────────
+  if (p === '/api/voice/doubao/speakers' && method === 'GET') {
+    sendJson(res, 200, listSpeakers());   // { official, cloned, all }
+    return;
+  }
+
+  if (p === '/api/voice/doubao/speakers' && method === 'POST') {
+    const b = await readJsonBody(req);
+    try {
+      const item = addSpeaker({ id: b.id, name: b.name, kind: b.kind || 'clone' });
+      log(`音色库新增：${item.name} (${item.id})`);
+      sendJson(res, 200, { ok: true, speaker: item });
+    } catch (e) { sendJson(res, 500, { error: e.message }); }
+    return;
+  }
+
+  if (p === '/api/voice/doubao/speakers' && method === 'DELETE') {
+    try {
+      const r = removeSpeaker(url.searchParams.get('id'));
+      log(`音色库删除：${url.searchParams.get('id')}`);
+      sendJson(res, 200, r);
+    } catch (e) { sendJson(res, 500, { error: e.message }); }
+    return;
+  }
+
+  // 上传参考音频做复刻（异步训练，可能等 1~2 分钟）
+  if (p === '/api/voice/doubao/clone' && method === 'POST') {
+    const b = await readJsonBody(req);
+    try {
+      const audio = b.audioBase64 ? Buffer.from(String(b.audioBase64), 'base64') : null;
+      const r = await cloneDoubaoVoice({
+        name: String(b.name || '').trim(),
+        text: String(b.text || b.promptText || '').trim(),
+        audio,
+        filename: String(b.filename || 'ref.wav'),
+        providerId: b.providerId || null,
+        onLog: (m, lvl) => log(m, lvl || 'info'),
+      });
+      log(`豆包复刻完成：${r.name} (${r.speakerId})`);
+      sendJson(res, 200, r);
+    } catch (e) { sendJson(res, 500, { error: e.message }); }
+    return;
+  }
+
+  if (p === '/api/voice/doubao/clone-status' && method === 'GET') {
+    try {
+      const d = await doubaoCloneStatus(url.searchParams.get('id'), { providerId: url.searchParams.get('providerId') || null });
+      sendJson(res, 200, d);
+    } catch (e) { sendJson(res, 500, { error: e.message }); }
+    return;
+  }
+
+  // ── 聊天室（多端共享设置/历史/记忆）──────────────
+  // ── 聊天池（两个会话共用一套设置/记忆/历史）─────────
+  if (p === '/api/sync/pools' && method === 'GET') {
+    const cfg = await loadConfig();
+    const pools = listRooms().map(r => ({
+      ...r,
+      members: r.members.map(m => ({
+        ...m,
+        name: cfg.chats?.[m.talker]?.name || m.name || m.talker,
+      })),
+    }));
+    sendJson(res, 200, { pools });
+    return;
+  }
+  if (p === '/api/sync/pools' && method === 'POST') {
+    const b = await readJsonBody(req);
+    try {
+      const r = await createPool({
+        a: b.a, b: b.b, direction: b.direction || 'a2b',
+        wipe: b.wipe !== false, name: b.name || '', parts: b.parts || null,
+      });
+      const w = r.stats.wiped;
+      log(`聊天池已建立：${r.room.name}（${b.direction}）`
+        + `${w ? `，清空目标 ${w.msgs} 条消息/${w.mems} 条记忆` : ''}`
+        + `，复制 ${r.stats.msgs} 条历史、${r.stats.mems} 条记忆、${r.stats.settings} 项设置`);
+      sendJson(res, 200, { ok: true, ...r });
+    } catch (e) { sendJson(res, 500, { error: e.message }); }
+    return;
+  }
+  if (p === '/api/sync/pools' && method === 'DELETE') {
+    try { sendJson(res, 200, deleteRoom(url.searchParams.get('id'))); }
+    catch (e) { sendJson(res, 500, { error: e.message }); }
+    return;
+  }
+  if (p === '/api/sync/pools/sync' && method === 'POST') {
+    const b = await readJsonBody(req);
+    try {
+      const r = b.id ? await syncRoom(b.id) : await syncAllRooms();
+      log(`聊天池重新同步：${JSON.stringify(r)}`);
+      sendJson(res, 200, { ok: true, ...r });
+    } catch (e) { sendJson(res, 500, { error: e.message }); }
+    return;
+  }
+
+  if (p === '/api/qq/rooms' && method === 'GET') {
+    sendJson(res, 200, { rooms: listRooms() }); return;
+  }
+  if (p === '/api/qq/rooms' && method === 'POST') {
+    const b = await readJsonBody(req);
+    try {
+      const room = createRoom({ name: b.name, members: b.members || [], sync: b.sync, parts: b.parts });
+      log(`创建聊天室：${room.name}（${room.members.length} 个成员）`);
+      const r = await syncRoom(room.id);
+      sendJson(res, 200, { ok: true, room, synced: r });
+    } catch (e) { sendJson(res, 500, { error: e.message }); }
+    return;
+  }
+  if (p === '/api/qq/rooms' && method === 'PATCH') {
+    const b = await readJsonBody(req);
+    try {
+      const room = updateRoom(b.id, { name: b.name, sync: b.sync, parts: b.parts });
+      sendJson(res, 200, { ok: true, room });
+    } catch (e) { sendJson(res, 500, { error: e.message }); }
+    return;
+  }
+  if (p === '/api/qq/rooms' && method === 'DELETE') {
+    try { sendJson(res, 200, deleteRoom(url.searchParams.get('id'))); }
+    catch (e) { sendJson(res, 500, { error: e.message }); }
+    return;
+  }
+  if (p === '/api/qq/rooms/member' && method === 'POST') {
+    const b = await readJsonBody(req);
+    try {
+      const room = b.remove ? removeRoomMember(b.id, b.talker) : addRoomMember(b.id, b);
+      if (b.resync) await syncRoom(b.id);
+      sendJson(res, 200, { ok: true, room });
+    } catch (e) { sendJson(res, 500, { error: e.message }); }
+    return;
+  }
+  if (p === '/api/qq/rooms/sync' && method === 'POST') {
+    const b = await readJsonBody(req);
+    try {
+      const r = b.id ? await syncRoom(b.id) : await syncAllRooms();
+      log(`聊天室同步：${JSON.stringify(r)}`);
+      sendJson(res, 200, { ok: true, ...r });
+    } catch (e) { sendJson(res, 500, { error: e.message }); }
+    return;
+  }
+
+  // ── QQ 扩展：记忆同步 / 定时发送 / 通用动作 ──────────────
+  if (p === '/api/qq/memory-links' && method === 'GET') {
+    sendJson(res, 200, { links: listMemoryLinks() }); return;
+  }
+  if (p === '/api/qq/memory-links' && method === 'POST') {
+    const b = await readJsonBody(req);
+    try {
+      const item = addMemoryLink({
+        wxTalker: b.wxTalker, qqTarget: b.qqTarget,
+        bidirectional: b.bidirectional !== false,
+        direction: b.direction || null,
+        parts: b.parts || null,
+      });
+      log(`会话镜像已绑定：${item.wxTalker} ↔ ${item.qqTarget}（${item.direction}）`);
+      sendJson(res, 200, { ok: true, link: item });
+    } catch (e) { sendJson(res, 500, { error: e.message }); }
+    return;
+  }
+  if (p === '/api/qq/memory-links' && method === 'PATCH') {
+    const b = await readJsonBody(req);
+    try {
+      const item = updateMemoryLink(b.id, { direction: b.direction, parts: b.parts });
+      sendJson(res, 200, { ok: true, link: item });
+    } catch (e) { sendJson(res, 500, { error: e.message }); }
+    return;
+  }
+  if (p === '/api/qq/memory-links' && method === 'DELETE') {
+    try {
+      const r = removeMemoryLink(url.searchParams.get('id'));
+      sendJson(res, 200, r);
+    } catch (e) { sendJson(res, 500, { error: e.message }); }
+    return;
+  }
+  if (p === '/api/qq/memory-sync' && method === 'POST') {
+    try {
+      const r = await syncAllMemory();
+      log(`会话同步完成：${r.links} 对，记忆/历史 ${r.moved} 条，设置 ${r.settings} 项`);
+      sendJson(res, 200, { ok: true, ...r });
+    } catch (e) { sendJson(res, 500, { error: e.message }); }
+    return;
+  }
+
+  // 手动触发一轮主动消息（调试用，会真的发出去）
+  if (p === '/api/qq/proactive/tick' && method === 'POST') {
+    try {
+      if (!qqProactive) { sendJson(res, 400, { error: '主动消息引擎未启动' }); return; }
+      const cfg = await loadConfig();
+      const pr = cfg.qq?.proactive;
+      if (!pr?.enabled) { sendJson(res, 200, { sent: 0, reason: '主动消息未开启' }); return; }
+      if (!(pr.targets || []).length) { sendJson(res, 200, { sent: 0, reason: '还没有设置目标会话' }); return; }
+      await qqProactive.tick();
+      sendJson(res, 200, { sent: 0, reason: '已执行一轮，若未发送说明不在时段或已达上限' });
+    } catch (e) { sendJson(res, 500, { error: e.message }); }
+    return;
+  }
+
+  if (p === '/api/qq/schedules' && method === 'GET') {
+    sendJson(res, 200, { schedules: listSchedules() }); return;
+  }
+  if (p === '/api/qq/schedules' && method === 'POST') {
+    const b = await readJsonBody(req);
+    try {
+      const item = addSchedule(b);
+      log(`新增 QQ 定时消息 → ${item.target}`);
+      sendJson(res, 200, { ok: true, schedule: item });
+    } catch (e) { sendJson(res, 500, { error: e.message }); }
+    return;
+  }
+  if (p === '/api/qq/schedules' && method === 'DELETE') {
+    try { sendJson(res, 200, removeSchedule(url.searchParams.get('id'))); }
+    catch (e) { sendJson(res, 500, { error: e.message }); }
+    return;
+  }
+  if (p === '/api/qq/schedules/toggle' && method === 'POST') {
+    const b = await readJsonBody(req);
+    try { sendJson(res, 200, { ok: true, schedule: toggleSchedule(b.id, b.enabled) }); }
+    catch (e) { sendJson(res, 500, { error: e.message }); }
+    return;
+  }
+
+  // 通用 OneBot 动作：把 NapCat 的能力直接透给 AI / 控制台
+  if (p === '/api/qq/actions' && method === 'GET') {
+    sendJson(res, 200, { actions: QQ_EXTENDED_ACTIONS }); return;
+  }
+  if (p === '/api/qq/action' && method === 'POST') {
+    const b = await readJsonBody(req);
+    const cfg = await loadConfig();
+    if (!cfg.qq?.enabled) { sendJson(res, 400, { error: 'QQ 通道未启用' }); return; }
+    if (!b.action || !/^[a-z_][a-z0-9_]*$/i.test(String(b.action))) {
+      sendJson(res, 400, { error: '动作名不合法' }); return;
+    }
+    try {
+      const r = await qqApi(String(b.action), b.params || {}, cfg.qq);
+      log(`QQ 动作 ${b.action} 执行成功`);
+      sendJson(res, 200, { ok: true, result: r });
+    } catch (e) { sendJson(res, 200, { ok: false, error: e.message }); }
+    return;
+  }
+
   // 试听：用当前 TTS 配置合成一段，返回 base64 给浏览器直接播
   if (p === '/api/voice/tts' && method === 'POST') {
     const body = await readJsonBody(req);
@@ -1146,6 +1894,9 @@ async function route(req, res) {
         providerId: body.providerId || null,
         modelId: body.modelId || null,
         voice: body.voice || null,
+        emotion: body.emotion || null,
+        emotionScale: body.emotionScale ?? null,
+        speed: body.speed ?? null,
         onLog: (m) => log(m, 'debug'),
       });
       const info = wavInfo(tts.buffer);
@@ -1695,6 +2446,10 @@ const server = createServer((req, res) => {
     else res.end();
   });
 });
+// 语音合成 + 复刻训练可能要几分钟，别让 Node 默认的 5 分钟把请求掐掉
+server.requestTimeout = 0;
+server.headersTimeout = 0;
+server.keepAliveTimeout = 75000;
 
 async function main() {
   loadDataDir();
@@ -1712,6 +2467,67 @@ async function main() {
     const n = pruneCache(14 * 86400000);
     if (n) log(`已清理 ${n} 个过期媒体缓存`, 'debug');
   } catch { /* ignore */ }
+
+  // QQ 主动消息引擎（没人的时候自己打招呼）
+  qqProactive = createProactiveEngine({
+    cfgProvider: loadConfig,
+    sender: async (target, line) => sendQQText(target, line, (await loadConfig()).qq),
+    log: (m, lvl) => log(m, lvl || 'info'),
+    // 让 AI 按记忆和当前时间生成一句自然的开场白；失败会回退到预设句
+    aiLine: async (target) => {
+      const cfg = await loadConfig();
+      const hour = new Date().getHours();
+      const part = hour < 6 ? '凌晨' : hour < 11 ? '上午' : hour < 14 ? '中午' : hour < 18 ? '下午' : hour < 22 ? '晚上' : '深夜';
+      // 把最近几轮对话带上，否则主动消息会和刚才聊的完全不相干
+      let recent = '';
+      try {
+        const talker = target ? (String(target).startsWith('qq:') ? target : `qq:${target}`) : '';
+        if (talker) {
+          const ctx = new ChatContext(talker);
+          recent = (ctx.getMessages(6) || [])
+            .filter(m => m.role !== 'system' && String(m.content || '').trim())
+            .map(m => `${m.role === 'assistant' ? '我' : '对方'}：${String(m.content).replace(/^\[语音[^\]]*\]\s*/, '').slice(0, 60)}`)
+            .join('\n');
+        }
+      } catch { /* ignore */ }
+      const r = await ai.chat([
+        {
+          role: 'system',
+          content: '你在用 QQ 给一个朋友主动发消息（对方暂时没说话）。要求：'
+            + '1) 一到两句完整的话，10~30 个字；'
+            + '2) 口语、随意，像真人闲着没事戳一下对方；'
+            + '3) 如果是接着之前的聊天，要自然接上那个话题，别突然换话题；'
+            + '4) 不要像客服（禁止"有什么可以帮你"）；不要自称 AI；不要解释；'
+            + '5) 只输出要发的那一句话本身。',
+        },
+        {
+          role: 'user',
+          content: recent
+            ? `现在是${part}。这是你们刚才聊的内容：\n${recent}\n\n顺着这个话题，发一句自然的话。`
+            : `现在是${part}。随便发一句自然的话。`,
+        },
+      ], { temperature: 1.0, maxTokens: 400, onLog: null });
+      const txt = String(r?.content || '').trim();
+      if (!txt) log(`主动消息 AI 返回空（provider=${r?.provider || '?'} model=${r?.model || '?'} finish=${r?.finishReason || '?'}）`, 'debug');
+      return txt;
+    },
+  });
+  qqProactive.start(60000);
+
+  // QQ 定时消息：每分钟检查一次到点的条目
+  const scheduleTicker = setInterval(async () => {
+    try {
+      const cfg = await loadConfig();
+      if (!cfg.qq?.enabled) return;
+      for (const s of dueSchedules()) {
+        try {
+          await sendQQText(s.target, s.text, cfg.qq);
+          log(`QQ 定时消息已发 → ${s.target}：${s.text.slice(0, 30)}`);
+        } catch (e) { log(`QQ 定时消息失败: ${e.message}`, 'warn'); }
+      }
+    } catch (e) { log(`定时检查异常: ${e.message}`, 'warn'); }
+  }, 60000);
+  scheduleTicker.unref?.();
 
   // 首次启动：把 wechatagent.json 里已授权的账号昵称同步过来，用于群聊 @ 判定
   try {
