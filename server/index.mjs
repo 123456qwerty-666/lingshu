@@ -12,7 +12,7 @@ import {
   encryptSecret, ROOT_DIR, getConfigSync,
 } from './config.mjs';
 import {
-  initDrivers, getReader, getHook, getState, sendText, sendImageFile, sendFileMsg,
+  initDrivers, getReader, getHook, getState, sendText, sendImageFile, sendFileMsg, cleanupStaging,
   startListening, stopListening, getSessions, getChatHistory, searchChats,
   refreshReaderStatus, bumpReceived, bumpSkipped,
 } from './wechat.mjs';
@@ -2423,6 +2423,7 @@ async function route(req, res) {
       stopListening();
       await new Promise(r => setTimeout(r, 600));
       await initDrivers();
+      cleanupStaging();
       await startListening(onSseEvent, sseHooks);
       log('微信连接已重建');
       sendJson(res, 200, { ok: true, state: getState() });

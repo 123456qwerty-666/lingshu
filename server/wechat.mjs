@@ -456,9 +456,31 @@ export async function sendFileMsg(wxidOrGroupId, filePath) {
     }
     throw new Error(`文件发送失败 ret=${result?.ret} ${result?.error || result?.retmsg || ''}`.trim());
   } finally {
-    // 暂存区不留垃圾
-    try { fs.rmSync(staged.dir, { recursive: true, force: true }); } catch { /* ignore */ }
+    // 微信客户端是「异步」读暂存文件的：接口返回 ret=0 只代表任务已受理，
+    // 文件还没真正上传完。这里如果立刻删，客户端就读不到 → 消息不出现，
+    // 但调用方以为发成功了。所以延迟删除，交给启动时的清理兜底。
+    const dir = staged.dir;
+    setTimeout(() => {
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+    }, 60000).unref?.();
   }
+}
+
+/** 启动时清理超过 1 小时的暂存目录，避免延迟删除堆积 */
+export function cleanupStaging() {
+  try {
+    const root = stagingDir();
+    const now = Date.now();
+    for (const name of fs.readdirSync(root)) {
+      const p = path.join(root, name);
+      try {
+        const st = fs.statSync(p);
+        if (st.isDirectory() && now - st.mtimeMs > 3600_000) {
+          fs.rmSync(p, { recursive: true, force: true });
+        }
+      } catch { /* ignore */ }
+    }
+  } catch { /* ignore */ }
 }
 
 export async function startListening(onMessage, hooks = {}) {
