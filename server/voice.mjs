@@ -442,9 +442,19 @@ function concatAudio(parts) {
   return Buffer.concat([parts[0], ...parts.slice(1).map(stripId3)]);
 }
 
-/** 调一次豆包合成，返回音频 Buffer */
-async function doubaoOnce({ provider, preset, speaker, text, emotion, scale, speed, onLog }) {
-  const resource = String(speaker).startsWith('S_') ? preset.resourceIcl : preset.resourceTts;
+/** 官方音色的资源版本：先试配置里的（2.0），失败再退 1.0；复刻音色走 icl */
+function resourceCandidatesFor(speaker, preset) {
+  const s = String(speaker || '');
+  if (s.startsWith('S_')) {
+    return [...new Set([preset.resourceIcl, 'seed-icl-1.0', 'seed-icl-2.0'].filter(Boolean))];
+  }
+  // 实测 aster/bigtts 这批官方音色在 2.0 下可用，1.0 会报 mismatch，
+  // 所以先试配置值，再兜底其它版本。
+  return [...new Set([preset.resourceTts, 'seed-tts-1.0', 'seed-tts-2.0'].filter(Boolean))];
+}
+
+/** 调一次豆包合成（指定资源版本），返回音频 Buffer */
+async function doubaoRequest({ provider, preset, speaker, text, emotion, scale, speed, resource }) {
   const reqParams = {
     text,
     speaker,
@@ -479,6 +489,30 @@ async function doubaoOnce({ provider, preset, speaker, text, emotion, scale, spe
   }
   if (!chunks.length) throw new Error(`豆包没有返回音频${errMsg ? '：' + errMsg : ''}`);
   return Buffer.concat(chunks);
+}
+
+/**
+ * 调豆包合成，自动匹配资源版本。
+ * 官方音色和复刻音色的 Resource-Id 不是一回事（seed-tts-1.0 / 2.0 / seed-icl-*），
+ * 对不上会报 "resource ID is mismatched with speaker related resource"，
+ * 所以这里按音色候选逐个试，只有「不匹配」才换下一个。
+ */
+async function doubaoOnce({ provider, preset, speaker, text, emotion, scale, speed, onLog }) {
+  const candidates = resourceCandidatesFor(speaker, preset);
+  let lastErr = null;
+  for (const resource of candidates) {
+    try {
+      const buf = await doubaoRequest({ provider, preset, speaker, text, emotion, scale, speed, resource });
+      if (resource !== candidates[0]) onLog?.(`音色 ${speaker} 实际使用资源版本 ${resource}`);
+      return buf;
+    } catch (e) {
+      lastErr = e;
+      const mismatch = /mismatch|resource.?id|not match|不支持|invalid/i.test(String(e.message));
+      if (!mismatch) throw e;
+      onLog?.(`音色 ${speaker} 与 ${resource} 不匹配，换下一个资源版本`, 'debug');
+    }
+  }
+  throw lastErr || new Error('豆包合成失败');
 }
 
 // ── TTS：文字 → 音频 ────────────────────────────────────────
