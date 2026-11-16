@@ -378,8 +378,13 @@ async function processMessage(msg, config) {
     settings.systemPrompt += '\n\n【语音】你能用 send_voice 把话念出来发给对方。'
       + '对方让你唱歌、要求用语音说、或者你想用语气表达情绪时，就调用它。'
       + 'text 只写要念出来的字，可以带语气词（唉、哈哈）和停顿「……」；不要写旁白或括号动作。'
-      + '发完用一句话告诉对方已经发了，别把内容重复一遍。'
-      + '**只有 send_voice 真的调用成功才能说「已经发给你了」**；没调用就绝不能说发了，否则对方会一直等一条不存在的语音。';
+      + '\n【一条消息只发一条语音】每条回复最多调用一次 send_voice，不要分成几条反复发。'
+      + '\n【发完语音后的铁律】send_voice 调用成功后，**默认什么文字都不要输出**。'
+      + '绝对禁止写「（语音已发送）」「（已发送）」「发你了」「收到了吗」「听到了吗」这类旁白或追问——'
+      + '语音本身就是完整的回复，不需要再用文字通知一遍，对方已经能听到了。'
+      + '只有当确实还有额外的事要讲（时间、地点、要对方做什么）时，才直接说那件事本身，'
+      + '也不要在前面加「语音发你了」这种铺垫。'
+      + '\n**只有 send_voice 真的调用成功才能说「已经发给你了」**；没调用就绝不能说发了，否则对方会一直等一条不存在的语音。';
     // 豆包支持逐句情绪：教模型在每句话后面打标签
     if (voiceCfg.tts.protocol === 'doubao') {
       settings.systemPrompt += '\n【语音脚本的情绪】写 send_voice 的 text 时，'
@@ -530,7 +535,8 @@ async function processMessage(msg, config) {
       pluginId: 'builtin-voice',
       description: '把一段话合成语音，以音频文件发给对方。适合：对方让你唱歌/说一遍/用语音、你需要用语气表达情绪、或者内容本身适合念出来。'
         + 'text 只写要念的内容，可以写歌词、语气词（如「唉」「哈哈」）和停顿「……」；不要写旁白、解释、括号动作。'
-        + '发送成功后，用一句话简短告诉对方已经发了，不要再把内容重复一遍。',
+        + '发送成功后不要再补一句「发给你了」或「听到了吗」——语音本身就是回复，'
+        + '只有还需要补充别的事时才写文字。',
       parameters: {
         type: 'object',
         properties: {
@@ -567,6 +573,11 @@ async function processMessage(msg, config) {
         // 定义上没有 run 方法，必须排在这里，否则会命中动态表报
         // 「dyn.run is not a function」。
         if (name === 'send_voice') {
+          // 一轮回复只允许发一条语音：模型经常在多个 round 里重复调用，
+          // 结果对方收到好几条一模一样的话。
+          if (sentVoicePaths.length) {
+            return { success: true, skipped: true, hint: '本轮已经发过语音了，不要再发第二条。直接结束回复。' };
+          }
           return sendVoiceTool(args, msg, config, sentVoicePaths);
         }
         // 再查运行时临时注册的工具（qq_action / send_qq_message / check_api_balance）
@@ -633,6 +644,34 @@ async function processMessage(msg, config) {
     } else {
       log('模型返回空内容，未回复', 'warn');
       return { ok: false, reason: 'empty_reply' };
+    }
+  }
+
+  // 语音发出去后，模型常会补一句「（语音已发送）」「语音已经发出去了」「听到了吗」——
+  // 这类整条都是旁白的回复直接丢掉，不要发出去。
+  if (sentVoicePaths.length && replyText.trim()) {
+    const bare = replyText.replace(/[（(【\[][^）)】\]]{0,20}[）)】\]]/g, '').replace(/[\s。，,.!！?？~～…]/g, '');
+    const isMeta =
+      // 「语音已经发送出去了」「声音发你了」这类以语音/发送开头的短句
+      (/^(语音|声音|音频|已发送|已发出)/.test(bare) && /(发送|发出|发出去|已发|发了)/.test(bare))
+      || /^(已)?(发送|发出去|发给你|发了)/.test(bare)
+      || /听到了吗|听到了没|听得到吗|听到了么|收到了吗|收到了没|收到了么/.test(bare)
+      // 「话已经发过去了，去听听吧」这类也属于废话
+      || (/发过去了|去听听|听听看|听一下|点开听/.test(bare) && bare.length <= 24);
+    // 只吞「短句 + 纯通知」，避免误伤真正的内容
+    if (bare.length === 0 || (isMeta && bare.length <= 24)) {
+      log(`语音已发送，丢弃多余旁白：「${replyText.slice(0, 30)}」`, 'debug');
+      replyText = '';
+    } else if (sentVoicePaths.length) {
+      // 「语音里都说了，重点是：…」→ 把前缀剥掉，只留真正有用的部分
+      const stripped = replyText.replace(
+        /^(语音里?都?说了[，,：:\s]*|刚(在)?语音里[说讲][了过][，,：:\s]*|上面(那条|的)?语音(里)?[说讲][了过][，,：:\s]*|我?在语音里[说讲][了过][，,：:\s]*)/,
+        '',
+      ).trim();
+      if (stripped !== replyText.trim()) {
+        log(`剥掉语音前缀：「${replyText.slice(0, 20)}」→「${stripped.slice(0, 20)}」`, 'debug');
+        replyText = stripped;
+      }
     }
   }
 
@@ -834,7 +873,7 @@ async function sendVoiceTool(args, msg, config, sink) {
       sent: true,
       durationSeconds: info?.durationSeconds ?? null,
       voice: tts.voice,
-      hint: '已发送成功。用一句话告诉对方已经发了即可，不要把内容再重复一遍。',
+      hint: '语音已发出。除非还有额外信息，否则不要再单独发文字通知。',
     };
   } catch (e) {
     log(`AI 发语音失败: ${e.message}`, 'warn');
@@ -844,6 +883,11 @@ async function sendVoiceTool(args, msg, config, sink) {
 
 /** 模型没给出正文时，用工具结果拼一条兜底回复 */
 function fallbackReplyFromTools(toolRuns = []) {
+  // 语音已经发出去了，不需要再用文字复述一遍「发给你了」——
+  // 那样每条语音后面都会跟一句废话。返回空串，调用方就不会补发文字。
+  const voice = [...toolRuns].reverse().find(t => t.name === 'send_voice');
+  if (voice && voice.result?.success !== false) return '';
+
   const search = [...toolRuns].reverse().find(t => t.name === 'web_search' && t.result?.results?.length);
   if (search) {
     const top = search.result.results.slice(0, 3);
