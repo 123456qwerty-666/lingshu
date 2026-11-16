@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   loadConfig, saveConfig, replaceConfig, getConfig, loadDataDir,
-  encryptSecret, ROOT_DIR,
+  encryptSecret, ROOT_DIR, getConfigSync,
 } from './config.mjs';
 import {
   initDrivers, getReader, getHook, getState, sendText, sendImageFile, sendFileMsg,
@@ -563,10 +563,15 @@ async function processMessage(msg, config) {
       maxRounds: 4,
       onLog: (m, lvl) => log(m, lvl || 'info'),
       callTool: async (name, args) => {
-        // 先查运行时临时注册的工具（qq_action / send_qq_message 等），
-        // 它们不在插件表里，否则会报「未找到工具」
+        // send_voice 虽然也经过 addTool 注册，但它的执行逻辑在下面单独分支里，
+        // 定义上没有 run 方法，必须排在这里，否则会命中动态表报
+        // 「dyn.run is not a function」。
+        if (name === 'send_voice') {
+          return sendVoiceTool(args, msg, config, sentVoicePaths);
+        }
+        // 再查运行时临时注册的工具（qq_action / send_qq_message / check_api_balance）
         const dyn = dynamicTools.get(name);
-        if (dyn) {
+        if (dyn && typeof dyn.run === 'function') {
           try {
             const r = await dyn.run(args);
             if (r && r.ok === false) log(`工具 ${name} 返回失败: ${String(r.error || '').slice(0, 120)}`, 'warn');
@@ -575,9 +580,6 @@ async function processMessage(msg, config) {
             log(`工具 ${name} 执行失败: ${e.message}`, 'warn');
             return { ok: false, error: e.message };
           }
-        }
-        if (name === 'send_voice') {
-          return sendVoiceTool(args, msg, config, sentVoicePaths);
         }
         const toolResult = await callToolByName(name, args, {
           talker: msg.talker, kind: msg.kind, conversationId: msg.conversationId,
@@ -761,6 +763,7 @@ async function synthAndSendVoice(msg, text, config, voiceCfg) {
   try {
     const tts = await synthesize(text, { config, talker: msg.talker, onLog: (m) => log(m, 'debug') });
     const info = wavInfo(tts.buffer);
+    // TTS 返回 mp3 时 wavInfo 读不出时长，用 ffprobe 兜底
     const dur = info?.durationSeconds || 0;
     const limit = voiceCfg.maxSeconds || 0;
     if (limit > 0 && dur > limit) {
@@ -784,6 +787,21 @@ async function synthAndSendVoice(msg, text, config, voiceCfg) {
 }
 
 /** 模型主动发语音：合成 → 落盘 → 发文件。不设时长上限（文件不受语音 60 秒限制） */
+/** 用 ffprobe 读音频时长（TTS 返回 mp3 时 wavInfo 认不出来，否则日志会显示 0.0s） */
+function audioDurationSeconds(filePath, cfg = {}) {
+  try {
+    // ffmpeg 路径在 qq 段里（voice 段没有），两个都试一下
+    const ffmpeg = cfg.ffmpegPath || cfg.qq?.ffmpegPath || getConfigSync()?.qq?.ffmpegPath || '';
+    if (!ffmpeg) return null;
+    const probe = path.join(path.dirname(ffmpeg), 'ffprobe.exe');
+    if (!fs.existsSync(probe)) return null;
+    const r = spawnSync(probe, ['-v', 'error', '-show_entries', 'format=duration',
+      '-of', 'default=noprint_wrappers=1:nokey=1', filePath], { encoding: 'utf8', timeout: 15000 });
+    const n = Number(String(r.stdout || '').trim());
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch { return null; }
+}
+
 async function sendVoiceTool(args, msg, config, sink) {
   const text = String(args?.text || '').trim();
   if (!text) return { success: false, error: 'text 不能为空' };
@@ -805,11 +823,12 @@ async function sendVoiceTool(args, msg, config, sink) {
       const cacheFile = copyToCache(fp, { tag: 'voice-out' });
       recordMedia(msg.talker, {
         dir: 'out', kind: 'voice', file: cacheFile, ts: Date.now(),
-        duration: info?.durationSeconds ?? null,
+        duration: durSec ?? null,
         text: text.slice(0, 120),
       });
     } catch { /* ignore */ }
-    log(`AI 主动发语音：${(info?.durationSeconds || 0).toFixed(1)}s · 音色 ${tts.voice}`);
+    const durSec = info?.durationSeconds ?? audioDurationSeconds(fp, config.voice);
+    log(`AI 主动发语音：${durSec ? durSec.toFixed(1) + 's' : '已发送'} · 音色 ${tts.voice}`);
     return {
       success: true,
       sent: true,
@@ -2378,6 +2397,9 @@ async function route(req, res) {
       type: 1,
       timestamp: Math.floor(Date.now() / 1000),
       rawid: `debug-${Date.now()}`,
+      // 关键：qq: 开头的会话必须标成 QQ，否则语音/图片会走微信发送通道，静默失败
+      platform: b.platform || (String(talker).startsWith('qq:') ? 'qq' : 'wechat'),
+      qqTarget: String(talker).startsWith('qq:') ? String(talker).slice(3) : '',
     };
     try {
       const r = await handleIncoming(fake, { source: 'debug', force: b.force === true });
