@@ -28,7 +28,7 @@ import {
 } from './memory.mjs';
 import { compressContext, contextUsage } from './compressor.mjs';
 import { stripTimeEcho } from './time.mjs';
-import { saveToCache, copyToCache, recordMedia, mergeMediaIntoMessages, pruneCache } from './media-log.mjs';
+import { saveToCache, copyToCache, recordMedia, mergeMediaIntoMessages, listMedia, pruneCache } from './media-log.mjs';
 import {
   qqApi, qqLoginInfo, qqFriendList, qqGroupList, sendQQ, sendQQText, sendQQImage,
   sendQQFace, sendQQRecord, normalizeOneBotEvent, cacheQQMedia, createProactiveEngine, qqVoiceToText,
@@ -1579,6 +1579,27 @@ async function route(req, res) {
         out.push({ role, content, ts: Number(m.ts) || 0, sender: role === 'assistant' ? 'AI' : '', platform: 'ai' });
       }
     } catch { /* ignore */ }
+
+    // 把本地缓存的图片/语音挂到消息上，控制台才能直接看图、播放语音
+    try {
+      const entries = listMedia('qq:' + target);
+      const used = new Set();
+      for (const m of out) {
+        const wantDir = m.role === 'assistant' ? 'out' : 'in';
+        let best = -1;
+        let bestDiff = Infinity;
+        entries.forEach((e, i) => {
+          if (used.has(i) || e.dir !== wantDir) return;
+          const d = Math.abs(e.ts - (m.ts || 0));
+          if (d <= 8000 && d < bestDiff) { bestDiff = d; best = i; }
+        });
+        if (best >= 0) {
+          used.add(best);
+          const e = entries[best];
+          m.media = { kind: e.kind, url: '/media/' + e.file, duration: e.duration, text: e.text };
+        }
+      }
+    } catch (e) { log('QQ 媒体匹配失败: ' + e.message, 'debug'); }
 
     out.sort((a, b) => (a.ts || 0) - (b.ts || 0));
     sendJson(res, 200, { target, selfId, messages: out.slice(-count) });

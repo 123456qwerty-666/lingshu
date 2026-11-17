@@ -1465,8 +1465,24 @@ async function loadQQMessages() {
       const out = m.role === 'assistant';
       const who = m.sender || (out ? 'AI' : '');
       const time = m.ts ? fmtTime(m.ts) : '';
-      return `<div class="msg ${out ? 'out' : 'in'}">${esc(m.content)}
-        <div class="meta">${esc(who)}${time ? ' · ' + esc(time) : ''}</div></div>`;
+      // QQ 的图片/语音：后台把本地缓存地址挂在 media 上，这里直接渲染
+      let body;
+      const md = m.media;
+      if (md && md.url && md.kind === 'voice') {
+        const dur = md.duration ? Number(md.duration).toFixed(1) + '″' : '';
+        body = '<div class="msg-voice"><span class="vi">🎤</span><audio controls preload="none" src="' + esc(md.url) + '"></audio>'
+          + (dur ? '<span class="hint dim">' + dur + '</span>' : '') + '</div>';
+        if (m.content && !/^\[语音\]/.test(m.content)) {
+          body += '<div class="hint dim" style="margin-top:4px">' + esc(m.content) + '</div>';
+        }
+      } else if (md && md.url && (md.kind === 'image' || md.kind === 'sticker')) {
+        body = '<a href="' + esc(md.url) + '" target="_blank" rel="noopener">'
+          + '<img class="msg-img" src="' + esc(md.url) + '" loading="lazy" alt="' + (md.kind === 'sticker' ? '表情' : '图片') + '"></a>';
+      } else {
+        body = esc(m.content);
+      }
+      return '<div class="msg ' + (out ? 'out' : 'in') + '">' + body
+        + '<div class="meta">' + esc(who) + (time ? ' · ' + esc(time) : '') + '</div></div>';
     }).join('');
     box.scrollTop = box.scrollHeight;
   } catch (e) {
@@ -2878,6 +2894,22 @@ async function memSelect(talker) {
   await memReload();
 }
 
+/** talker（wxid / qq:private:xxx）→ 人能看懂的名字 */
+function displayNameOf(talker, fallback = '') {
+  const t = String(talker || '');
+  const hit = (S.chats || []).find(x => x.talker === t)
+    || (S.qqChats || []).find(x => x.talker === t)
+    || (S.qq?.chats || []).find(x => x.talker === t);
+  if (hit?.name && hit.name !== t) return hit.name;
+  if (fallback && fallback !== t) return fallback;
+  // 兜底：把原始 ID 变成可读的说法
+  const m = t.match(/^(?:qq:)?(private|group):(\d+)$/);
+  if (m) return (m[1] === 'group' ? 'QQ 群 ' : 'QQ ') + m[2];
+  if (t.includes('@chatroom')) return '微信群 ' + t.replace('@chatroom', '');
+  if (/^wxid_/.test(t)) return '微信好友 ' + t.slice(5, 13);
+  return t;
+}
+
 function renderMemScopes() {
   const el = document.getElementById('mem-scope-list');
   if (!el) return;
@@ -2891,7 +2923,7 @@ function renderMemScopes() {
   el.innerHTML = list.map(s => `
     <div class="chat-item ${M.talker === s.talker ? 'active' : ''}" onclick="memSelect('${esc(s.talker)}')">
       <div style="min-width:0">
-        <div class="name">${esc(s.name || s.talker)}</div>
+        <div class="name">${esc(displayNameOf(s.talker, s.name))}</div>
         <div class="sub">${s.kind === 'group' ? '👥' : '👤'} 会话 ${s.chatCount} · 成员 ${s.memberMemories}${s.pinned ? ` · 钉 ${s.pinned}` : ''}</div>
       </div>
       <div class="right">
@@ -2915,7 +2947,7 @@ async function memReload() {
   }
   const n = Object.keys(M.detail.members || {}).length;
   document.getElementById('mem-title').textContent =
-    `${M.detail.name || M.talker}${n ? ` · ${n} 位成员` : ''}`;
+    `${displayNameOf(M.talker, M.detail.name)}${n ? ` · ${n} 位成员` : ''}`;
   renderMemTabs();
   renderMemSide();
   renderMemList();

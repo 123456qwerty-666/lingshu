@@ -710,9 +710,14 @@ export function listScopes(cfg = null) {
     const allMems = [...(s.chat || []), ...Object.values(s.members || {}).flatMap(b => b.memories || [])];
     const fading = allMems.filter(m => retention(m, now, mc.decay) < 0.4).length;
     const pinned = allMems.filter(m => m.pinned || m.importance >= mc.pinImportance).length;
+    // 名字优先取聊天配置里的（用户认识的昵称/群名），
+    // scope 里存的往往是创建时的 talker（一串 wxid），列表看起来全是乱码
+    const cfgName = config.chats?.[s.talker]?.name;
+    const niceName = (cfgName && cfgName !== s.talker) ? cfgName
+      : ((s.name && s.name !== s.talker) ? s.name : '');
     out.push({
       talker: s.talker,
-      name: s.name,
+      name: niceName || s.name || s.talker,
       kind: s.kind,
       chatCount,
       memberCount,
