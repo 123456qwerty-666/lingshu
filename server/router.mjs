@@ -269,6 +269,26 @@ export class MessageRouter {
       });
     }
 
+    // 最近 5 条对话（带准确时间）
+    // 历史消息里只给「对方」加时间尾注（给 assistant 加会让模型模仿着也附时间），
+    // 所以这里单独给一份完整时间线，让模型清楚「刚才聊了什么、什么时候聊的」。
+    const recentFive = context
+      .getMessages(5)
+      .filter(m => m.role !== 'system' && String(m.content || '').trim());
+    if (recentFive.length) {
+      const lines = recentFive.map((m) => {
+        const who = m.role === 'assistant' ? '你' : '对方';
+        const body = String(m.content).replace(/\n+/g, ' ').trim();
+        return `[${formatTime(m.ts || now)}] ${who}：${body}`;
+      });
+      messages.push({
+        role: 'system',
+        content: `【最近 ${recentFive.length} 条对话（含准确时间）】\n${lines.join('\n')}\n`
+          + '（这是刚刚发生的对话。注意每条前面的时间，据此理解「刚才」「刚刚」「刚才说的」指的是哪句、'
+          + '隔了多久；不要把这个时间格式抄进你的回复里。）',
+      });
+    }
+
     for (const m of context.getMessages(historyLimit)) {
       if (m.role === 'system') continue;
       const content = typeof m.content === 'string' ? m.content : String(m.content ?? '');
