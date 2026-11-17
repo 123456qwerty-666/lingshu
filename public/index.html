@@ -1964,6 +1964,9 @@ async function loadProviders() {
   if (!d) return;
   S.providers = d.providers || [];
   const box = document.getElementById('providers-container');
+  // 这个容器只在「AI 配置」页存在；在聊天设置里提前拉数据时它是 null，
+  // 不判空会抛错，导致后面的渲染拿不到 providers。
+  if (!box) return;
   box.innerHTML = S.providers.map(p => `
     <div class="provider-card">
       <div class="provider-header">
@@ -2261,6 +2264,10 @@ async function renderSettings(talker, boxId = null) {
   if (!box) return;
   if (isQQ) S.qqSettingsBox = target;   // 记住 QQ 上一次用的容器（可能是内层带返回按钮的）
   S.settingsBox = target;
+  // 渲染前确保「提供商列表」「音色列表」已经加载，
+  // 否则下拉里只剩「跟随全局」，看起来就像保存后设置丢失。
+  if (!(S.providers || []).length) { try { await loadProviders(); } catch { /* ignore */ } }
+  if (!(V.official || []).length) { try { await loadSpeakers(); } catch { /* ignore */ } }
   // 微信聊天在 S.chats；QQ 会话要优先用 S.qqChats（带 settings），好友列表 S.qq.chats 没有设置字段
   const c = S.chats.find(x => x.talker === talker)
     || (S.qqChats || []).find(x => x.talker === talker)
@@ -2304,11 +2311,22 @@ async function renderSettings(talker, boxId = null) {
     </div>
     <div class="form-group">
       <label>该聊天使用的模型</label>
-      <select id="cs-model">
+      <select id="cs-model" onchange="onChatModelChange('${esc(talker)}')">
         <option value="">跟随全局</option>
-        ${provModels.map(m => `<option value="${esc(m.id)}" ${c.model?.modelId === m.id ? 'selected' : ''}>${esc(m.id)}${m.multimodal ? ' 🖼' : ''}</option>`).join('')}
-        ${c.model?.modelId && !provModels.some(m => m.id === c.model.modelId) ? `<option value="${esc(c.model.modelId)}" selected>${esc(c.model.modelId)}（已配置）</option>` : ''}
+        ${(S.providers || []).map(p => (p.models || []).length
+          ? `<optgroup label="${esc(p.name)}">${
+              (p.models || []).map(m => {
+                const val = `${p.id}::${m.id}`;
+                const sel = c.model?.providerId === p.id && c.model?.modelId === m.id;
+                return `<option value="${esc(val)}" ${sel ? 'selected' : ''}>${esc(m.id)}${m.multimodal ? ' 🖼' : ''}${m.imageGen ? ' 🎨' : ''}</option>`;
+              }).join('')
+            }</optgroup>`
+          : '').join('')}
+        ${c.model?.providerId && !(S.providers.find(p => p.id === c.model.providerId)?.models || []).some(m => m.id === c.model.modelId)
+          ? `<option value="${esc(c.model.providerId + '::' + (c.model.modelId || ''))}" selected>${esc(c.model.modelId || c.model.providerId)}（已配置，不在列表）</option>`
+          : ''}
       </select>
+      <div class="hint dim">选模型会自动带上对应的提供商</div>
     </div>
     <div class="form-row">
       <div class="form-group">
@@ -2320,9 +2338,20 @@ async function renderSettings(talker, boxId = null) {
       </div>
       <div class="form-group">
         <label>识图模型</label>
-        <select id="cs-vision-model">
+        <select id="cs-vision-model" onchange="onChatVisionModelChange('${esc(talker)}')">
           <option value="">跟随全局</option>
-          ${((S.providers.find(p => p.id === (c.vision?.providerId || ''))?.models) || []).map(m => `<option value="${esc(m.id)}" ${c.vision?.modelId === m.id ? 'selected' : ''}>${esc(m.id)}${m.multimodal ? ' 🖼' : ''}</option>`).join('')}
+          ${(S.providers || []).map(p => (p.models || []).length
+            ? `<optgroup label="${esc(p.name)}">${
+                (p.models || []).map(m => {
+                  const val = `${p.id}::${m.id}`;
+                  const sel = c.vision?.providerId === p.id && c.vision?.modelId === m.id;
+                  return `<option value="${esc(val)}" ${sel ? 'selected' : ''}>${esc(m.id)}${m.multimodal ? ' 🖼' : ''}</option>`;
+                }).join('')
+              }</optgroup>`
+            : '').join('')}
+          ${c.vision?.providerId && !(S.providers.find(p => p.id === c.vision.providerId)?.models || []).some(m => m.id === c.vision.modelId)
+            ? `<option value="${esc(c.vision.providerId + '::' + (c.vision.modelId || ''))}" selected>${esc(c.vision.modelId || c.vision.providerId)}（已配置，不在列表）</option>`
+            : ''}
         </select>
       </div>
     </div>
@@ -2412,36 +2441,80 @@ async function renderSettings(talker, boxId = null) {
     </div>
     </div>`;
 }
+/** 按提供商分组的模型下拉（value 用 providerId::modelId） */
+function rebuildModelSelect(selId, providers, curPid, curMid) {
+  const sel = document.getElementById(selId);
+  if (!sel) return;
+  sel.innerHTML = '<option value="">跟随全局</option>' + (providers || []).map(p => ((p.models || []).length
+    ? `<optgroup label="${esc(p.name)}">${(p.models || []).map(m => {
+        const val = `${p.id}::${m.id}`;
+        const on = (p.id === curPid && m.id === curMid);
+        return `<option value="${esc(val)}" ${on ? 'selected' : ''}>${esc(m.id)}${m.multimodal ? ' 🖼' : ''}${m.imageGen ? ' 🎨' : ''}</option>`;
+      }).join('')}</optgroup>`
+    : '')).join('');
+}
+
+function chatOf(talker) {
+  return S.chats.find(x => x.talker === talker)
+    || (S.qqChats || []).find(x => x.talker === talker)
+    || (S.qq?.chats || []).find(x => x.talker === talker);
+}
+
 function onChatProviderChange(talker) {
-  const c = S.chats.find(x => x.talker === talker) || (S.qq?.chats || []).find(x => x.talker === talker);
   const pid = document.getElementById('cs-provider').value;
   const prov = S.providers.find(p => p.id === pid);
-  const sel = document.getElementById('cs-model');
-  const keep = c?.model?.providerId === pid ? c.model.modelId : '';
-  sel.innerHTML = '<option value="">跟随全局</option>' +
-    (prov?.models || []).map(m => `<option value="${esc(m.id)}" ${m.id === keep ? 'selected' : ''}>${esc(m.id)}${m.multimodal ? ' 🖼' : ''}</option>`).join('');
+  // 只把选中项切到这个提供商的第一个模型，下拉仍保留全部分组，
+  // 否则用户会看到「模型只剩当前这一个」。
+  rebuildModelSelect('cs-model', S.providers, pid, prov?.models?.[0]?.id || '');
+}
+
+function onChatModelChange(talker) {
+  const v = document.getElementById('cs-model').value;
+  if (!v) return;
+  const [pid] = v.split('::');
+  const provSel = document.getElementById('cs-provider');
+  if (provSel && pid && provSel.value !== pid) provSel.value = pid;
 }
 
 function onChatVisionProviderChange(talker) {
   const pid = document.getElementById('cs-vision-provider').value;
   const prov = S.providers.find(p => p.id === pid);
-  const sel = document.getElementById('cs-vision-model');
-  sel.innerHTML = '<option value="">跟随全局</option>' +
-    (prov?.models || []).map(m => `<option value="${esc(m.id)}">${esc(m.id)}${m.multimodal ? ' 🖼' : ''}</option>`).join('');
+  rebuildModelSelect('cs-vision-model', S.providers, pid, prov?.models?.[0]?.id || '');
+}
+
+function onChatVisionModelChange(talker) {
+  const v = document.getElementById('cs-vision-model').value;
+  if (!v) return;
+  const [pid] = v.split('::');
+  const sel = document.getElementById('cs-vision-provider');
+  if (sel && pid && sel.value !== pid) sel.value = pid;
 }
 async function saveChatSettings(talker) {
   const pluginBoxes = [...document.querySelectorAll('#cs-plugins input[type=checkbox]')];
   const checked = pluginBoxes.filter(b => b.checked).map(b => b.value);
   const all = pluginBoxes.length;
   const compressOn = document.getElementById('cs-auto-compress').checked;
+  // 模型下拉的 value 是 "providerId::modelId"，提供商优先从这里推导，
+  // 免得两个下拉各选各的、保存后互相打架。
+  const modelVal = document.getElementById('cs-model').value || '';
+  const visionVal = document.getElementById('cs-vision-model').value || '';
+  const splitCombo = (v) => {
+    if (!v) return { pid: '', mid: '' };
+    const i = v.indexOf('::');
+    return i < 0 ? { pid: v, mid: '' } : { pid: v.slice(0, i), mid: v.slice(i + 2) };
+  };
+  const mPick = splitCombo(modelVal);
+  const vPick = splitCombo(visionVal);
+  const provFallback = document.getElementById('cs-provider').value;
+  const visFallback = document.getElementById('cs-vision-provider').value;
   const patch = {
     enabled: document.getElementById('cs-enabled').checked,
     triggerMode: document.getElementById('cs-trigger').value || null,
-    model: document.getElementById('cs-provider').value
-      ? { providerId: document.getElementById('cs-provider').value, modelId: document.getElementById('cs-model').value || null }
+    model: (mPick.pid || provFallback)
+      ? { providerId: mPick.pid || provFallback, modelId: mPick.mid || null }
       : null,
-    vision: document.getElementById('cs-vision-provider').value
-      ? { providerId: document.getElementById('cs-vision-provider').value, modelId: document.getElementById('cs-vision-model').value || null }
+    vision: (vPick.pid || visFallback)
+      ? { providerId: vPick.pid || visFallback, modelId: vPick.mid || null }
       : null,
     plugins: checked.length === all ? null : checked,
     persona: document.getElementById('cs-persona').value.trim() || null,
@@ -2455,10 +2528,17 @@ async function saveChatSettings(talker) {
       emotion: document.getElementById('cs-voice-emotion') ? (document.getElementById('cs-voice-emotion').value || null) : undefined,
       emotionScale: document.getElementById('cs-voice-emotion-scale') ? (Number(document.getElementById('cs-voice-emotion-scale').value) || null) : undefined,
       engine: document.getElementById('cs-voice-engine')?.value || null,
+      // 引擎选「跟随全局」时不能直接返回 null —— 那样用户刚选的音色会被丢掉，
+      // 保存后重画就变成默认音色，看起来像「设置自己变回去了」。
       tts: (() => {
         const eng = document.getElementById('cs-voice-engine')?.value || '';
-        if (!eng) return null;
         const v = document.getElementById('cs-voice-voice')?.value || '';
+        const prev = chatOf(talker)?.voice?.tts || null;
+        if (!eng) {
+          if (!v) return prev;                       // 音色也没动 → 保留原值
+          const gProto = V.cfg?.tts?.protocol || 'doubao';
+          return { providerId: gProto, protocol: gProto, voice: v };
+        }
         return { providerId: eng, protocol: eng, voice: v || (eng === 'doubao' ? 'S_kDqSH3h12' : 'stella') };
       })(),
     },
