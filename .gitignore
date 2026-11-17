@@ -26,3 +26,6 @@ Thumbs.db
 data/_*
 *.part
 _ui.js
+
+# 临时脚本
+_*.mjs
