@@ -2471,6 +2471,7 @@ async function renderSettings(talker, boxId = null) {
         </select>
       </div>
       <div class="form-group"><label>随机概率</label><input id="cs-voice-random" type="number" min="0" max="1" step="0.05" value="${effV.randomRate ?? 0.35}"></div>
+      <div class="form-group"><label>语速 0.5~2</label><input id="cs-voice-speed" type="number" min="0.5" max="2" step="0.1" value="${effV.speed ?? 1}"></div>
     </div>
     ${showProto === 'doubao' ? `
       <div class="form-row">
@@ -2583,6 +2584,12 @@ async function saveChatSettings(talker) {
       sendMode: document.getElementById('cs-voice-mode').value,
       voice: document.getElementById('cs-voice-voice').value || null,
       randomRate: Number(document.getElementById('cs-voice-random').value) || 0.35,
+      speed: (() => {
+        const el = document.getElementById('cs-voice-speed');
+        if (!el) return null;
+        const v = Number(el.value);
+        return Number.isFinite(v) && v > 0 ? v : null;   // 空 = 跟随全局
+      })(),
       emotion: document.getElementById('cs-voice-emotion') ? (document.getElementById('cs-voice-emotion').value || null) : undefined,
       emotionScale: document.getElementById('cs-voice-emotion-scale') ? (Number(document.getElementById('cs-voice-emotion-scale').value) || null) : undefined,
       engine: document.getElementById('cs-voice-engine')?.value || null,

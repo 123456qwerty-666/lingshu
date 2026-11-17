@@ -31,7 +31,7 @@ import { stripTimeEcho } from './time.mjs';
 import { saveToCache, copyToCache, recordMedia, mergeMediaIntoMessages, listMedia, pruneCache } from './media-log.mjs';
 import {
   qqApi, qqLoginInfo, qqFriendList, qqGroupList, sendQQ, sendQQText, sendQQImage,
-  sendQQFace, sendQQRecord, normalizeOneBotEvent, cacheQQMedia, createProactiveEngine, qqVoiceToText,
+  sendQQFace, sendQQRecord, normalizeOneBotEvent, cacheQQMedia, createProactiveEngine, qqVoiceToText, qqVoiceToWav,
 } from './qq.mjs';
 import {
   listMemoryLinks, addMemoryLink, removeMemoryLink, updateMemoryLink, syncAllMemory, broadcastMemory, mirrorTurn,
@@ -76,6 +76,12 @@ const MIME = {
   '.js': 'application/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8',
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
   '.webp': 'image/webp', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
+  // 音频：控制台的 <audio> 靠这个 Content-Type 才能播放，
+  // 缺了会退回 application/octet-stream，浏览器直接拒绝播放。
+  '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg',
+  '.m4a': 'audio/mp4', '.amr': 'audio/amr', '.aac': 'audio/aac',
+  '.mp4': 'video/mp4', '.webm': 'video/webm',
+  '.pdf': 'application/pdf', '.txt': 'text/plain; charset=utf-8',
 };
 
 function sendJson(res, status, data) {
@@ -384,7 +390,9 @@ async function processMessage(msg, config) {
       + '语音本身就是完整的回复，不需要再用文字通知一遍，对方已经能听到了。'
       + '只有当确实还有额外的事要讲（时间、地点、要对方做什么）时，才直接说那件事本身，'
       + '也不要在前面加「语音发你了」这种铺垫。'
-      + '\n**只有 send_voice 真的调用成功才能说「已经发给你了」**；没调用就绝不能说发了，否则对方会一直等一条不存在的语音。';
+      + '\n**只有 send_voice 真的调用成功才能说「已经发给你了」**；没调用就绝不能说发了，否则对方会一直等一条不存在的语音。'
+      + '\n【语速】对方嫌你说得太快/太慢，或直接说「说快点」「慢点说」「正常速度」时，'
+      + '调用 set_voice_speed 调整（会存进这个会话）。调完不要汇报「已调整语速」，接着聊就行。';
     // 豆包支持逐句情绪：教模型在每句话后面打标签
     if (voiceCfg.tts.protocol === 'doubao') {
       settings.systemPrompt += '\n【语音脚本的情绪】写 send_voice 的 text 时，'
@@ -528,6 +536,33 @@ async function processMessage(msg, config) {
       },
     });
   }
+  // 让模型能自己调语速（对方说「说快点」「慢点说」时）
+  if (voiceCfg.ttsConfigured && voiceCfg.enabled) {
+    addTool({
+      name: 'set_voice_speed',
+      pluginId: 'builtin-voice',
+      description: '调整你自己说话的语速，只对当前会话生效并自动保存。'
+        + '对方说「说快点」「慢一点」「语速快些/慢些」「正常语速」时调用。'
+        + '调用成功后不要向对方报告「已调整」，正常接着聊即可，也不要每句都提语速。',
+      parameters: {
+        type: 'object',
+        properties: {
+          speed: { type: 'number', description: '语速倍数 0.5~2：1 是正常，1.2~1.5 偏快，0.7~0.9 偏慢' },
+        },
+        required: ['speed'],
+      },
+      run: async ({ speed }) => {
+        const sp = Math.min(2, Math.max(0.5, Number(speed) || 1));
+        const cfgNow = await loadConfig();
+        const cur = cfgNow.chats?.[msg.talker] || {};
+        const voice = { ...(cur.voice || {}), speed: sp };
+        await saveConfig({ chats: { [msg.talker]: { ...cur, voice } } });
+        log('AI 调整语速: ' + sp + 'x（' + msg.talker + '）');
+        return { ok: true, speed: sp, hint: '已保存。之后这个会话都用 ' + sp + ' 倍速说话，不用告诉对方你改了什么。' };
+      },
+    });
+  }
+
   // 内置语音工具：让模型自己决定「这条要不要用语音」
   if (voiceCfg.ttsConfigured && voiceCfg.enabled) {
     addTool({
@@ -856,6 +891,10 @@ async function sendVoiceTool(args, msg, config, sink) {
     if (!tts.buffer?.length) return { success: false, error: '合成结果是空音频' };
     const info = wavInfo(tts.buffer);
     const fp = saveAudioFile(tts.buffer, tts.ext, 'ai');
+    // durSec 必须在 recordMedia 之前算好：之前写在后面，导致这里命中 TDZ，
+    // recordMedia 每次都抛错又被空 catch 吞掉，语音永远进不了媒体索引，
+    // 控制台里就只剩「[语音]」两个字。
+    const durSec = info?.durationSeconds ?? audioDurationSeconds(fp, config.voice);
     await sendReplyVoice(msg, fp);
     sink.push(fp);
     try {
@@ -865,8 +904,7 @@ async function sendVoiceTool(args, msg, config, sink) {
         duration: durSec ?? null,
         text: text.slice(0, 120),
       });
-    } catch { /* ignore */ }
-    const durSec = info?.durationSeconds ?? audioDurationSeconds(fp, config.voice);
+    } catch (e) { log('语音留底失败: ' + e.message, 'debug'); }
     log(`AI 主动发语音：${durSec ? durSec.toFixed(1) + 's' : '已发送'} · 音色 ${tts.voice}`);
     return {
       success: true,
@@ -1124,13 +1162,44 @@ async function serveStatic(res, urlPath) {
   }
 }
 
-async function serveMedia(res, urlPath) {  const rel = decodeURIComponent(urlPath.replace(/^\/media\/+/, ''));
+async function serveMedia(res, urlPath, req = null) {
+  const rel = decodeURIComponent(urlPath.replace(/^\/media\/+/, ''));
   const filePath = path.join(MEDIA_DIR, rel);
   if (!filePath.startsWith(MEDIA_DIR)) { sendJson(res, 403, { error: 'forbidden' }); return; }
+  const type = MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream';
   try {
-    const data = await fs.promises.readFile(filePath);
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream' });
-    res.end(data);
+    const stat = await fs.promises.stat(filePath);
+    const total = stat.size;
+    const range = req?.headers?.range;
+    // 浏览器播音频会先发 Range 探测，不返回 206 有些内核会直接判定不可播放
+    if (range) {
+      const m = /bytes=(\d*)-(\d*)/.exec(String(range));
+      if (m) {
+        const start = m[1] ? Number(m[1]) : 0;
+        const end = m[2] ? Math.min(Number(m[2]), total - 1) : total - 1;
+        if (start >= total || start > end) {
+          res.writeHead(416, { 'Content-Range': 'bytes */' + total });
+          res.end();
+          return;
+        }
+        res.writeHead(206, {
+          'Content-Type': type,
+          'Content-Range': 'bytes ' + start + '-' + end + '/' + total,
+          'Accept-Ranges': 'bytes',
+          'Content-Length': end - start + 1,
+          'Cache-Control': 'no-cache',
+        });
+        fs.createReadStream(filePath, { start, end }).pipe(res);
+        return;
+      }
+    }
+    res.writeHead(200, {
+      'Content-Type': type,
+      'Content-Length': total,
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'no-cache',
+    });
+    fs.createReadStream(filePath).pipe(res);
   } catch {
     sendJson(res, 404, { error: 'not found' });
   }
@@ -1449,7 +1518,23 @@ async function route(req, res) {
       let savedAbs = '';
       if (m.url) {
         try {
-          const rel = await cacheQQMedia(m.url, m.type === 'record' ? 'voice-in' : 'image-in');
+          let rel = '';
+          if (m.type === 'record') {
+            // QQ 语音是 SILK 编码（.bin），浏览器放不了。
+            // 入缓存时就转成 WAV，控制台里才能直接点播放。
+            try {
+              const resp = await fetch(m.url, { signal: AbortSignal.timeout(30000) });
+              if (!resp.ok) throw new Error('HTTP ' + resp.status);
+              const raw = Buffer.from(await resp.arrayBuffer());
+              const { wav } = await qqVoiceToWav(raw, cfg.qq || {});
+              rel = saveToCache(wav, { ext: 'wav', tag: 'qq-voice-in' });
+            } catch (e) {
+              log('QQ 语音转码失败，退回存原文件: ' + e.message, 'warn');
+              rel = await cacheQQMedia(m.url, 'voice-in');
+            }
+          } else {
+            rel = await cacheQQMedia(m.url, 'image-in');
+          }
           if (rel) savedAbs = path.join(MEDIA_DIR, rel);
           recordMedia(ev.sessionId, {
             dir: 'in', kind: m.type === 'record' ? 'voice' : m.type === 'image' ? 'image' : 'file',
@@ -1586,12 +1671,18 @@ async function route(req, res) {
       const used = new Set();
       for (const m of out) {
         const wantDir = m.role === 'assistant' ? 'out' : 'in';
+        // 消息正文里就有类型线索，先按类型筛，避免语音匹配到图片
+        const wantKind = /^\[语音\]|\[语音\]/.test(m.content) ? 'voice'
+          : /\[图片\]/.test(m.content) ? 'image'
+            : /\[表情\]/.test(m.content) ? 'sticker'
+              : /\[文件\]/.test(m.content) ? 'file' : '';
         let best = -1;
         let bestDiff = Infinity;
         entries.forEach((e, i) => {
           if (used.has(i) || e.dir !== wantDir) return;
+          if (wantKind && e.kind !== wantKind) return;
           const d = Math.abs(e.ts - (m.ts || 0));
-          if (d <= 8000 && d < bestDiff) { bestDiff = d; best = i; }
+          if (d <= 60000 && d < bestDiff) { bestDiff = d; best = i; }
         });
         if (best >= 0) {
           used.add(best);
@@ -2497,7 +2588,7 @@ async function route(req, res) {
   }
 
   // ── 媒体文件 ──
-  if (p.startsWith('/media/')) { await serveMedia(res, p); return; }
+  if (p.startsWith('/media/')) { await serveMedia(res, p, req); return; }
 
   // ── 静态资源 ──
   await serveStatic(res, p);
