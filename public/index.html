@@ -405,6 +405,11 @@ input.ctl,select.ctl,textarea.ctl{width:100%;padding:8px 11px;background:var(--s
                   <button class="btn btn-sm" onclick="qqSendText()">发送</button>
                 </div>
                 <div class="io-cell">
+                  <span class="io-tag ai" title="模拟对方发一条 QQ 消息给 AI，AI 会正常接收并回复">→ AI</span>
+                  <input id="qq-peer-input" placeholder="模拟对方发给 AI…" onkeydown="if(event.key==='Enter')qqSendAsPeer()">
+                  <button class="btn btn-sm btn-primary" onclick="qqSendAsPeer()">发送</button>
+                </div>
+                <div class="io-cell">
                   <input id="qq-image-file" type="file" accept="image/*" style="display:none" onchange="qqSendImage(this)">
                   <button class="btn btn-sm" onclick="document.getElementById('qq-image-file').click()">图片</button>
                   <button class="btn btn-sm" onclick="qqSendVoice()">语音</button>
@@ -1403,6 +1408,43 @@ function selectQQChat(talker) {
   loadQQMessages();
   // 选中就展示这个 QQ 会话的独立设置（和微信那套一样）
   qqShowChatSettings(talker);
+}
+
+/** 「→ AI」：模拟对方发一条 QQ 消息给 AI，AI 会正常接收并回复 */
+async function qqSendAsPeer() {
+  const input = document.getElementById('qq-peer-input');
+  const text = (input?.value || '').trim();
+  if (!text) return;
+  if (!S.qq?.target) { toast('先在左侧选一个 QQ 会话', 'error'); return; }
+  const talker = 'qq:' + S.qq.target;
+  const c = (S.qqChats || []).find(x => x.talker === talker)
+    || (S.qq.chats || []).find(x => x.talker === talker) || {};
+  const kind = c.kind || (String(S.qq.target).startsWith('group:') ? 'group' : 'private');
+  const btn = input.nextElementSibling;
+  input.disabled = true;
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  try {
+    const r = await api('/debug/send', {
+      method: 'POST',
+      body: JSON.stringify({
+        talker, kind,
+        conversationId: c.conversationId || '',
+        senderName: c.name || S.qq.target,
+        platform: 'qq',
+        force: true,
+        text,
+      }),
+    });
+    input.value = '';
+    const ok = r?.result?.ok;
+    toast(ok ? 'AI 已接收并回复' : ('AI 未回复' + (r?.result?.reason ? '：' + r.result.reason : '')), ok ? 'success' : 'error');
+    setTimeout(loadQQMessages, 900);
+  } catch (e) {
+    toast('发送失败: ' + e.message, 'error');
+  } finally {
+    input.disabled = false;
+    if (btn) { btn.disabled = false; btn.textContent = '发送'; }
+  }
 }
 
 /** 拉 QQ 会话历史并渲染（NapCat 实时消息 + 灵枢 AI 对话） */
