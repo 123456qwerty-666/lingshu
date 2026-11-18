@@ -1422,8 +1422,8 @@ async function route(req, res) {
       const msgs = await getChatHistory(talker, limit);
       const { messages, orphans } = mergeMediaIntoMessages(msgs, talker);
       const withText = mergeContextText(messages, talker);
-      const all = [...withText, ...orphans].sort((a, b) => (a.createTime || 0) - (b.createTime || 0));
-      sendJson(res, 200, { messages: all, withMedia: true });
+      // 未归档媒体不再混进消息流，单独返回，由前端按钮单独展示
+      sendJson(res, 200, { messages: withText, orphans, withMedia: true });
     } catch (e) { sendJson(res, 500, { error: e.message }); }
     return;
   }
@@ -1742,20 +1742,17 @@ async function route(req, res) {
 
     // 媒体匹配统一走 mergeMediaIntoMessages（全局贪心分配，按类型+方向+时间），
     // 之前 QQQQ 这边自己写的「逐条找最近」会互相抢媒体，导致语音挂到错误的消息上。
-    let finalMessages = out;
+    let matched = out;
+    let orphanMedia = [];
     try {
       const merged = mergeMediaIntoMessages(out, 'qq:' + target);
-      finalMessages = [...merged.messages, ...merged.orphans];
+      matched = merged.messages;
+      orphanMedia = merged.orphans || [];
     } catch (e) { log('QQ 媒体匹配失败: ' + e.message, 'debug'); }
 
-    finalMessages.sort((a, b) => {
-      // 未归档媒体固定垫底，避免插进消息流造成「顺序错乱」的观感
-      const ao = a._orphan ? 1 : 0;
-      const bo = b._orphan ? 1 : 0;
-      if (ao !== bo) return ao - bo;
-      return (a.ts || Number(a.createTime) * 1000) - (b.ts || Number(b.createTime) * 1000);
-    });
-    sendJson(res, 200, { target, selfId, messages: finalMessages.slice(-count) });
+    matched.sort((a, b) => (a.ts || Number(a.createTime) * 1000) - (b.ts || Number(b.createTime) * 1000));
+    // 未归档媒体单独返回，不混进聊天窗口
+    sendJson(res, 200, { target, selfId, messages: matched.slice(-count), orphans: orphanMedia });
     return;
   }
 

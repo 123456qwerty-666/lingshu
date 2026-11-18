@@ -162,17 +162,12 @@ export function mergeMediaIntoMessages(messages, talker) {
 
   const out = messages.map((m, mi) => (attach.has(mi) ? { ...m, media: attach.get(mi) } : m));
 
-  // 没能对上历史消息的媒体，只保留「落在当前消息时间范围内」的。
-  // 历史只取最近 N 条，更早的媒体本来就不该出现在这个列表里——
-  // 否则会堆一堆几天前的图在末尾，看着像消息乱序。
-  const times = messages.map(tsOf).filter(Boolean);
-  const minTs = times.length ? Math.min(...times) : 0;
-  const maxTs = times.length ? Math.max(...times) : 0;
-  const inRange = (e) => !times.length || (e.ts >= minTs - 120000 && e.ts <= maxTs + 120000);
+  // 没能对上历史消息的媒体。这些不再混进聊天流（前端有单独入口查看），
+  // 所以这里返回全部未匹配的，只按数量截断，避免列表无限长。
   const orphans = entries
     .map((e, i) => ({ e, i }))
-    .filter(({ e, i }) => !usedEntry.has(i) && inRange(e))
-    .slice(-40)
+    .filter(({ i }) => !usedEntry.has(i))
+    .slice(-200)
     .map(({ e }) => ({
       localId: 'media-' + e.ts + '-' + e.file,
       localType: e.kind === 'voice' ? 34 : e.kind === 'sticker' ? 47 : 3,
