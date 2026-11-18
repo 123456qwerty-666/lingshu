@@ -455,13 +455,18 @@ function resourceCandidatesFor(speaker, preset) {
 
 /** 调一次豆包合成（指定资源版本），返回音频 Buffer */
 async function doubaoRequest({ provider, preset, speaker, text, emotion, scale, speed, resource }) {
+  // 语速转换：豆包用 speech_rate（整数百分比偏移），范围 [-50, 100]
+  //   0 = 正常语速，100 = 2.0 倍速，-50 = 0.5 倍速
+  // 我们内部统一用倍速（1 = 正常），所以这里换算成 (speed - 1) * 100。
+  const rate = (speed && speed !== 1) ? Math.max(-50, Math.min(100, Math.round((speed - 1) * 100))) : 0;
+  const audioParams = { format: 'mp3', sample_rate: 24000 };
+  if (rate !== 0) audioParams.speech_rate = rate;
   const reqParams = {
     text,
     speaker,
-    audio_params: { format: 'mp3', sample_rate: 24000 },
+    audio_params: audioParams,
   };
   if (emotion) { reqParams.emotion = emotion; reqParams.emotion_scale = scale || 4; }
-  if (speed && speed !== 1) reqParams.speed_ratio = speed;
 
   const resp = await fetchRetry(endpoint(provider.baseUrl, preset.ttsPath), {
     method: 'POST',
