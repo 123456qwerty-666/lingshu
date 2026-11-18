@@ -3050,7 +3050,7 @@ function memCard(m, memberKey) {
   return `<div class="mem-card">
     <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">
       <div style="min-width:0;flex:1">
-        <div class="txt">${m.pinned ? '📌 ' : ''}${esc(m.text)}</div>
+        <div class="txt">${m.pinned ? '<span class="tag tag-red" style="margin-right:6px">强制</span>' : ''}${esc(m.text)}</div>
         <div class="chips" style="margin-top:6px">
           <span class="tag ${labelCls}">${esc(m.label || '')} ${Number(m.importance || 0).toFixed(2)}</span>
           <span class="tag">${esc(m.kind || '')}</span>
@@ -3065,7 +3065,7 @@ function memCard(m, memberKey) {
         </div>
       </div>
       <div class="mem-actions">
-        <button class="btn btn-sm" onclick="memPin('${m.id}', ${mk}, ${!m.pinned})">${m.pinned ? '取消钉住' : '钉住'}</button>
+        <button class="btn btn-sm${m.pinned ? ' btn-primary' : ''}" onclick="memPin('${m.id}', ${mk}, ${!m.pinned})" title="强制记忆：每次对话都会带上，永远不会被自动遗忘">${m.pinned ? '取消强制' : '设为强制'}</button>
         <button class="btn btn-sm" onclick="memEdit('${m.id}', ${mk})">编辑</button>
         <button class="btn btn-sm btn-danger" onclick="memDel('${m.id}', ${mk})">忘掉</button>
       </div>
@@ -3089,7 +3089,8 @@ function renderMemList() {
 
   if (M.tab === 'chat') {
     const items = [...d.chat].sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.importance - a.importance);
-    box.innerHTML = items.length ? items.map(m => memCard(m, null)).join('')
+    const tip = '<div class="hint dim" style="padding:2px 0 6px">标为「强制」的记忆每次对话都会带上，并且永远不会被自动遗忘。</div>';
+    box.innerHTML = items.length ? tip + items.map(m => memCard(m, null)).join('')
       : '<div class="empty"><span class="big">🧠</span>这个会话还没有记忆<br>聊几句就会自动沉淀</div>';
     return;
   }
@@ -3132,7 +3133,7 @@ async function loadArchive() {
 async function memPin(id, memberKey, pinned) {
   try {
     await api('/memory/update', { method: 'POST', body: JSON.stringify({ talker: M.talker, id, memberKey, patch: { pinned } }) });
-    toast(pinned ? '已钉住（不再自动遗忘）' : '已取消钉住', 'success');
+    toast(pinned ? '已设为强制：每次对话都会带上，且不会被遗忘' : '已取消强制', 'success');
     await memReload();
     await loadMemory();
   } catch (e) { toast('操作失败: ' + e.message, 'error'); }

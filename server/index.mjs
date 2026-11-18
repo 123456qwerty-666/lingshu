@@ -1047,14 +1047,35 @@ function modelIsMultimodal(config, providerId, modelId) {
 }
 
 /** 用识图模型把图片转成文字描述 */
+/**
+ * 识图模型候选链：会话配置优先，全局兜底。
+ * 关键点：providerId 和 modelId 必须同源，否则请求会静默空返回，
+ * 表现就是「AI 看不见图片」。
+ */
+function visionCandidates(config, talker) {
+  const chatVision = config.chats?.[talker]?.vision || {};
+  const globalVp = config.ai.vision?.providerId || config.ai.defaultProvider;
+  const globalVm = config.ai.vision?.modelId || config.ai.defaultModel || undefined;
+  const normalize = (pid, mid) => {
+    if (!pid) return null;
+    const models = config.ai.providers?.[pid]?.models || [];
+    const okMid = (mid && (models.length === 0 || models.some(m => m.id === mid))) ? mid : '';
+    return { pid, mid: okMid || undefined };
+  };
+  const out = [];
+  const c1 = normalize(chatVision.providerId, chatVision.modelId);
+  if (c1) out.push(c1);
+  const c2 = normalize(globalVp, globalVm);
+  if (c2 && !out.some(c => c.pid === c2.pid && c.mid === c2.mid)) out.push(c2);
+  return out;
+}
+
 async function describeImages(imageIds, { msg, config }) {
   const reader = getReader();
   if (!reader) return { ok: false, reason: '读取器未连接' };
 
-  // 这个聊天单独指定的识图模型优先，否则跟随全局
-  const chatVision = config.chats?.[msg?.talker]?.vision || {};
-  const vp = chatVision.providerId || config.ai.vision?.providerId || config.ai.defaultProvider;
-  const vm = chatVision.modelId || config.ai.vision?.modelId || config.ai.defaultModel || undefined;
+  // 这个聊天单独指定的识图模型优先，否则跟随全局（同源校验在 visionCandidates 里）
+  const candidates = visionCandidates(config, msg?.talker);
   const descriptions = [];
   let okCount = 0;
 
@@ -1065,7 +1086,7 @@ async function describeImages(imageIds, { msg, config }) {
       if (!data?.b64) { descriptions.push('（这张图读不出来）'); continue; }
       const dataUrl = `data:${data.mime || 'image/jpeg'};base64,${data.b64}`;
       const isSticker = msg?.contentType === 47;
-      const r = await ai.chat([
+      const reqMessages = [
         {
           role: 'system',
           content: isSticker
@@ -1079,8 +1100,23 @@ async function describeImages(imageIds, { msg, config }) {
             { type: 'image_url', image_url: { url: dataUrl } },
           ],
         },
-      ], { providerId: vp, modelOverride: vm, maxTokens: 300, temperature: 0.3, onLog: (m, l) => log(m, l) });
-      const text = (r.content || '').trim();
+      ];
+      let r = null;
+      let text = '';
+      for (let ci = 0; ci < candidates.length; ci += 1) {
+        const cand = candidates[ci];
+        try {
+          const rr = await ai.chat(reqMessages, {
+            providerId: cand.pid, modelOverride: cand.mid,
+            maxTokens: 300, temperature: 0.3, onLog: (m, l) => log(m, l),
+          });
+          const tt = String(rr?.content || '').trim();
+          if (tt) { r = rr; text = tt; break; }
+          log('识图模型 ' + cand.pid + ' 返回空，试下一个', 'warn');
+        } catch (e) {
+          log('识图失败 ' + cand.pid + ': ' + e.message, 'warn');
+        }
+      }
       if (text) {
         descriptions.push(text);
         okCount++;
@@ -1117,8 +1153,25 @@ function injectImageDescriptions(messages, descriptions, { isSticker }) {
 async function qqImageToText(url, { config, talker = null, isSticker = false } = {}) {
   if (!url) throw new Error('没有图片地址');
   const chatVision = config.chats?.[talker]?.vision || {};
-  const vp = chatVision.providerId || config.ai.vision?.providerId || config.ai.defaultProvider;
-  const vm = chatVision.modelId || config.ai.vision?.modelId || config.ai.defaultModel || undefined;
+  const globalVp = config.ai.vision?.providerId || config.ai.defaultProvider;
+  const globalVm = config.ai.vision?.modelId || config.ai.defaultModel || undefined;
+
+  // 提供商和模型必须同源。历史配置里出现过「providerId=deepseek +
+  // modelId=gemini-2.5-flash-image」这种组合，请求必然空返回，
+  // 表现就是「AI 看不见图片」。这里做一次归一并准备回退链。
+  const normalize = (pid, mid) => {
+    if (!pid) return null;
+    const models = config.ai.providers?.[pid]?.models || [];
+    const okMid = (mid && (models.length === 0 || models.some(m => m.id === mid))) ? mid : '';
+    return { pid, mid: okMid || undefined };
+  };
+  const candidates = [];
+  const chatCand = normalize(chatVision.providerId, chatVision.modelId);
+  if (chatCand) candidates.push(chatCand);
+  const globalCand = normalize(globalVp, globalVm);
+  if (globalCand && !candidates.some(c => c.pid === globalCand.pid && c.mid === globalCand.mid)) {
+    candidates.push(globalCand);
+  }
 
   const resp = await fetch(url, { signal: AbortSignal.timeout(30000) });
   if (!resp.ok) throw new Error(`下载图片失败 HTTP ${resp.status}`);
@@ -1127,7 +1180,7 @@ async function qqImageToText(url, { config, talker = null, isSticker = false } =
   const mime = (resp.headers.get('content-type') || '').split(';')[0] || 'image/jpeg';
   const dataUrl = `data:${mime};base64,${buf.toString('base64')}`;
 
-  const r = await ai.chat([
+  const messages = [
     {
       role: 'system',
       content: isSticker
@@ -1141,8 +1194,28 @@ async function qqImageToText(url, { config, talker = null, isSticker = false } =
         { type: 'image_url', image_url: { url: dataUrl } },
       ],
     },
-  ], { providerId: vp, modelOverride: vm, maxTokens: 300, temperature: 0.3 });
-  return String(r?.content || '').trim();
+  ];
+
+  let lastErr = null;
+  for (let i = 0; i < candidates.length; i += 1) {
+    const c = candidates[i];
+    try {
+      const r = await ai.chat(messages, {
+        providerId: c.pid, modelOverride: c.mid, maxTokens: 300, temperature: 0.3,
+      });
+      const text = String(r?.content || '').trim();
+      if (text) {
+        if (i > 0) log(`会话识图模型不可用，已回退到 ${c.pid}`, 'debug');
+        return text;
+      }
+      log(`识图模型 ${c.pid}${c.mid ? '/' + c.mid : ''} 返回空，试下一个`, 'warn');
+    } catch (e) {
+      lastErr = e;
+      log(`识图失败 ${c.pid}${c.mid ? '/' + c.mid : ''}: ${e.message}`, 'warn');
+    }
+  }
+  if (lastErr) throw lastErr;
+  return '';
 }
 
 // ── HTTP 路由 ─────────────────────────────────────────────

@@ -322,10 +322,16 @@ export function searchMemories(talker, { query = '', memberKey = null, limit = 8
   });
 
   scored.sort((a, b) => b._score - a._score);
+  // 手动标成「强制」的记忆：不管关键词命中与否、分数多低，每次都要带上
+  const forced = scored.filter(x => x.pinned);
   // 一个关键词都没命中时，只靠留存率/重要度会把大量无关记忆硬塞进提示词，
   // 所以这种情况把门槛抬高（只留真正重要或刚发生过的事）
   const minScore = q.size ? mc.retrieve.minScore : Math.max(mc.retrieve.minScore, 0.55);
-  const picked = scored.filter(x => x._score >= minScore).slice(0, limit);
+  const room = Math.max(0, limit - forced.length);
+  const picked = [
+    ...forced,
+    ...scored.filter(x => !x.pinned && x._score >= minScore).slice(0, room),
+  ];
 
   if (touch && picked.length) touchMemories(talker, picked.map(p => ({ id: p.id, scope: p._scope, member: p._member })));
   return picked;
@@ -368,11 +374,22 @@ export function buildMemoryPrompt(talker, { query = '', memberKey = null, member
   });
   if (!picked.length) return { prompt: '', used: [] };
 
-  const chatItems = picked.filter(p => p._scope === 'chat');
-  const memberItems = picked.filter(p => p._scope === 'member');
+  const forcedItems = picked.filter(p => p.pinned);
+  const chatItems = picked.filter(p => p._scope === 'chat' && !p.pinned);
+  const memberItems = picked.filter(p => p._scope === 'member' && !p.pinned);
 
   const now = nowTs();
   const lines = [];
+  if (forcedItems.length) {
+    lines.push('【必须一直记住的事】');
+    for (const m of forcedItems) {
+      const who = m._scope === 'member'
+        ? `${m._memberName || m.memberName || '对方'}：`
+        : '';
+      lines.push(`- ${who}${m.text}${m.tags?.length ? `（${m.tags.join('/')}）` : ''}`);
+    }
+    lines.push('（以上是对方要求你长期记住的，任何时候都要遵守，不用等他再提醒。）');
+  }
   if (memberItems.length) {
     lines.push('【你记得关于聊天对象的事】');
     for (const m of memberItems.slice(0, mc.retrieve.maxMember)) {
