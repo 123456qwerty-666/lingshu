@@ -100,42 +100,90 @@ export function listMedia(talker) {
 
 /**
  * 把媒体按时间并进历史消息。
- * 微信给的是秒级 createTime，这里允许 ±3 秒误差，并区分收发方向。
+ *
+ * 旧实现是「每条消息各自找最近的媒体」，效果差：一条消息会先把后面的媒体的
+ * 抢走，导致真正该配的那条反而没配上，于是出现「语音跑到了前一条消息上、
+ * 原位置只剩『[语音]』占位」的现象。
+ *
+ * 现在改成全局贪心：先把所有 (消息, 媒体) 的候选配对按时间差从小到大排序，
+ * 再依次分配，每条消息和每条媒体都只能用一次。
  */
 export function mergeMediaIntoMessages(messages, talker) {
   const entries = listMedia(talker);
   if (!entries.length) return { messages, orphans: [] };
 
-  const used = new Set();
-  const out = messages.map(m => {
-    const ts = Number(m.createTime) * 1000;
-    const dir = m.isSend ? 'out' : 'in';
-    let best = -1;
-    let bestDiff = Infinity;
-    entries.forEach((e, i) => {
-      if (used.has(i) || e.dir !== dir) return;
+  // QQ 消息带的是毫秒时间戳 ts，微信带的是秒级 createTime
+  const tsOf = (m) => {
+    if (Number(m.ts) > 1e12) return Number(m.ts);
+    if (Number(m.createTime)) return Number(m.createTime) * 1000;
+    return Number(m.ts) || 0;
+  };
+  const dirOf = (m) => {
+    if (m.role === 'assistant') return 'out';
+    if (m.role === 'user') return 'in';
+    return m.isSend ? 'out' : 'in';
+  };
+  // 消息正文里如果自带类型线索（[语音] / [图片] / [表情]），必须同类型才能配
+  const kindOf = (m) => {
+    const t = String(m.content ?? m.parsedContent ?? '');
+    if (/\[语音\]/.test(t)) return 'voice';
+    if (/\[图片\]/.test(t)) return 'image';
+    if (/\[表情\]/.test(t)) return 'sticker';
+    if (/\[文件\]/.test(t)) return 'file';
+    return '';
+  };
+
+  const pairs = [];
+  messages.forEach((m, mi) => {
+    const ts = tsOf(m);
+    if (!ts) return;
+    const dir = dirOf(m);
+    const wantKind = kindOf(m);
+    entries.forEach((e, ei) => {
+      if (e.dir !== dir) return;
+      if (wantKind && e.kind !== wantKind) return;
       const d = Math.abs(e.ts - ts);
-      if (d <= 3000 && d < bestDiff) { bestDiff = d; best = i; }
+      if (d <= 8000) pairs.push({ mi, ei, d });
     });
-    if (best < 0) return m;
-    used.add(best);
-    const e = entries[best];
-    return { ...m, media: { kind: e.kind, url: `/media/${e.file}`, duration: e.duration, text: e.text } };
   });
 
-  // 没能对上历史消息的（比如图片还没同步进消息库），单独作为补充条目返回
+  // 时间差小的优先配对
+  pairs.sort((a, b) => a.d - b.d);
+  const usedMsg = new Set();
+  const usedEntry = new Set();
+  const attach = new Map();
+  for (const p of pairs) {
+    if (usedMsg.has(p.mi) || usedEntry.has(p.ei)) continue;
+    usedMsg.add(p.mi);
+    usedEntry.add(p.ei);
+    const e = entries[p.ei];
+    attach.set(p.mi, { kind: e.kind, url: '/media/' + e.file, duration: e.duration, text: e.text });
+  }
+
+  const out = messages.map((m, mi) => (attach.has(mi) ? { ...m, media: attach.get(mi) } : m));
+
+  // 没能对上历史消息的媒体，只保留「落在当前消息时间范围内」的。
+  // 历史只取最近 N 条，更早的媒体本来就不该出现在这个列表里——
+  // 否则会堆一堆几天前的图在末尾，看着像消息乱序。
+  const times = messages.map(tsOf).filter(Boolean);
+  const minTs = times.length ? Math.min(...times) : 0;
+  const maxTs = times.length ? Math.max(...times) : 0;
+  const inRange = (e) => !times.length || (e.ts >= minTs - 120000 && e.ts <= maxTs + 120000);
   const orphans = entries
     .map((e, i) => ({ e, i }))
-    .filter(({ i }) => !used.has(i))
+    .filter(({ e, i }) => !usedEntry.has(i) && inRange(e))
     .slice(-40)
     .map(({ e }) => ({
-      localId: `media-${e.ts}-${e.file}`,
+      localId: 'media-' + e.ts + '-' + e.file,
       localType: e.kind === 'voice' ? 34 : e.kind === 'sticker' ? 47 : 3,
       createTime: Math.floor(e.ts / 1000),
       isSend: e.dir === 'out' ? 1 : 0,
       senderDisplay: e.dir === 'out' ? '我' : '',
       parsedContent: e.kind === 'voice' ? '[语音]' : e.kind === 'sticker' ? '[表情]' : '[图片]',
-      media: { kind: e.kind, url: `/media/${e.file}`, duration: e.duration, text: e.text },
+      media: { kind: e.kind, url: '/media/' + e.file, duration: e.duration, text: e.text },
+      // 标记成「未归档」：这类条目不是真实消息，前端固定放在末尾，
+      // 否则按时间插进消息流会让人以为消息顺序乱了
+      _orphan: true,
     }));
 
   return { messages: out, orphans };

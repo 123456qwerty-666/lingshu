@@ -1740,35 +1740,22 @@ async function route(req, res) {
       }
     } catch { /* ignore */ }
 
-    // 把本地缓存的图片/语音挂到消息上，控制台才能直接看图、播放语音
+    // 媒体匹配统一走 mergeMediaIntoMessages（全局贪心分配，按类型+方向+时间），
+    // 之前 QQQQ 这边自己写的「逐条找最近」会互相抢媒体，导致语音挂到错误的消息上。
+    let finalMessages = out;
     try {
-      const entries = listMedia('qq:' + target);
-      const used = new Set();
-      for (const m of out) {
-        const wantDir = m.role === 'assistant' ? 'out' : 'in';
-        // 消息正文里就有类型线索，先按类型筛，避免语音匹配到图片
-        const wantKind = /^\[语音\]|\[语音\]/.test(m.content) ? 'voice'
-          : /\[图片\]/.test(m.content) ? 'image'
-            : /\[表情\]/.test(m.content) ? 'sticker'
-              : /\[文件\]/.test(m.content) ? 'file' : '';
-        let best = -1;
-        let bestDiff = Infinity;
-        entries.forEach((e, i) => {
-          if (used.has(i) || e.dir !== wantDir) return;
-          if (wantKind && e.kind !== wantKind) return;
-          const d = Math.abs(e.ts - (m.ts || 0));
-          if (d <= 60000 && d < bestDiff) { bestDiff = d; best = i; }
-        });
-        if (best >= 0) {
-          used.add(best);
-          const e = entries[best];
-          m.media = { kind: e.kind, url: '/media/' + e.file, duration: e.duration, text: e.text };
-        }
-      }
+      const merged = mergeMediaIntoMessages(out, 'qq:' + target);
+      finalMessages = [...merged.messages, ...merged.orphans];
     } catch (e) { log('QQ 媒体匹配失败: ' + e.message, 'debug'); }
 
-    out.sort((a, b) => (a.ts || 0) - (b.ts || 0));
-    sendJson(res, 200, { target, selfId, messages: out.slice(-count) });
+    finalMessages.sort((a, b) => {
+      // 未归档媒体固定垫底，避免插进消息流造成「顺序错乱」的观感
+      const ao = a._orphan ? 1 : 0;
+      const bo = b._orphan ? 1 : 0;
+      if (ao !== bo) return ao - bo;
+      return (a.ts || Number(a.createTime) * 1000) - (b.ts || Number(b.createTime) * 1000);
+    });
+    sendJson(res, 200, { target, selfId, messages: finalMessages.slice(-count) });
     return;
   }
 

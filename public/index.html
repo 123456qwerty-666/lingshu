@@ -2171,7 +2171,18 @@ async function reloadHistory() {
   try {
     const d = await api(`/chat/history?talker=${encodeURIComponent(S.current)}&limit=60`);
     // 统一按时间升序：最旧在上、最新在下（不依赖接口返回顺序）
-    const msgs = [...(d.messages || [])].sort((a, b) => (Number(a.createTime) || 0) - (Number(b.createTime) || 0));
+    // 稳定排序：同一秒内的多条（比如连发几张图）保持后端顺序，
+    // 否则 Array.sort 对相等元素不保证稳定，界面看起来就"顺序错乱"
+    const msgs = (d.messages || [])
+      .map((m, i) => ({ m, i }))
+      .sort((a, b) => {
+        // 未归档的媒体（找不到对应消息的）固定垫底，不参与时间排序
+        const ao = a.m._orphan ? 1 : 0;
+        const bo = b.m._orphan ? 1 : 0;
+        if (ao !== bo) return ao - bo;
+        return (Number(a.m.createTime) || 0) - (Number(b.m.createTime) || 0) || a.i - b.i;
+      })
+      .map(x => x.m);
     if (!msgs.length) { box.innerHTML = '<div class="empty"><span class="big">📭</span>暂无历史消息</div>'; return; }
     box.innerHTML = msgs.map(m => {
       const out = !!m.isSend;
@@ -2203,8 +2214,9 @@ async function reloadHistory() {
         body = esc(m.content || m.parsedContent || m.fullText || '[非文本消息]');
       }
 
+      const orphanTag = m._orphan ? '<span class="tag tag-yellow" style="margin-left:6px">未归档</span>' : '';
       return `<div class="msg ${out ? 'out' : 'in'}">${body}
-        <div class="meta">${out ? '我' : esc(m.senderDisplay || m.senderUsername || '')} · ${fmtTime(m.createTime)}</div></div>`;
+        <div class="meta">${out ? '我' : esc(m.senderDisplay || m.senderUsername || '')} · ${fmtTime(m.createTime)}${orphanTag}</div></div>`;
     }).join('');
     box.scrollTop = box.scrollHeight;
   } catch (e) {
