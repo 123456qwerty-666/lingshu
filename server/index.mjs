@@ -61,13 +61,44 @@ const logs = [];
 const MAX_LOGS = 800;
 const logListeners = new Set();
 
+// 日志同时落盘，否则服务一重启，之前的报错就查不到了
+let _logStream = null;
+let _logDay = '';
+function logFileOf(day) {
+  return path.join(DATA_DIR, 'logs', 'server-' + day + '.log');
+}
+function writeLogFile(line) {
+  try {
+    const day = new Date().toISOString().slice(0, 10);
+    if (!_logStream || _logDay !== day) {
+      try { _logStream?.end(); } catch { /* ignore */ }
+      fs.mkdirSync(path.join(DATA_DIR, 'logs'), { recursive: true });
+      _logStream = fs.createWriteStream(logFileOf(day), { flags: 'a' });
+      _logDay = day;
+      // 顺手清理 7 天前的日志
+      try {
+        for (const f of fs.readdirSync(path.join(DATA_DIR, 'logs'))) {
+          const m = /^server-(\d{4}-\d{2}-\d{2})\.log$/.exec(f);
+          if (!m) continue;
+          if (Date.now() - new Date(m[1]).getTime() > 7 * 86400000) {
+            fs.unlinkSync(path.join(DATA_DIR, 'logs', f));
+          }
+        }
+      } catch { /* ignore */ }
+    }
+    _logStream.write(line + '\n');
+  } catch { /* 写日志失败不影响主流程 */ }
+}
+
 function log(msg, level = 'info') {
   const entry = { ts: Date.now(), level, msg: String(msg) };
   logs.push(entry);
   if (logs.length > MAX_LOGS) logs.shift();
   for (const fn of logListeners) { try { fn(entry); } catch { /* ignore */ } }
-  if (level === 'error') console.error(`[${new Date().toISOString()}] ERROR: ${entry.msg}`);
-  else console.log(`[${new Date().toISOString()}] ${level.toUpperCase()}: ${entry.msg}`);
+  const line = `[${new Date().toISOString()}] ${level.toUpperCase()}: ${entry.msg}`;
+  writeLogFile(line);
+  if (level === 'error') console.error(line);
+  else console.log(line);
 }
 
 // ── 工具函数 ──────────────────────────────────────────────

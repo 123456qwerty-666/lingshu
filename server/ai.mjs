@@ -124,21 +124,31 @@ export class AIClient {
     for (let i = 0; i < chain.length; i++) {
       const provider = chain[i];
       tried.push(provider.id);
-      try {
-        const data = await this.request(provider, path, buildBody(provider), timeoutMs);
-        this._lastGood = provider.id;
-        data._provider = provider.id;
-        data._model = provider.model;
-        if (i > 0) onLog?.(`已自动切换到 ${provider.id}/${provider.model}（前面 ${tried.slice(0, -1).join('、')} 不可用）`, 'warn');
-        return data;
-      } catch (e) {
-        lastErr = e;
-        const more = i < chain.length - 1;
-        if (more && isRetryableError(e)) {
-          onLog?.(`${provider.id} 不可用（${e.message.slice(0, 60)}），尝试下一个…`, 'warn');
-          continue;
+      // 瞬时抖动（DNS、连接被重置、网关 502）往往重试一次就好了，
+      // 直接换提供商反而慢。这里每个提供商最多试 2 次，间隔递增。
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const data = await this.request(provider, path, buildBody(provider), timeoutMs);
+          this._lastGood = provider.id;
+          data._provider = provider.id;
+          data._model = provider.model;
+          if (i > 0) onLog?.(`已自动切换到 ${provider.id}/${provider.model}（前面 ${tried.slice(0, -1).join('、')} 不可用）`, 'warn');
+          return data;
+        } catch (e) {
+          lastErr = e;
+          const retryable = isRetryableError(e);
+          if (attempt === 0 && retryable) {
+            onLog?.(`${provider.id} 请求失败（${e.message.slice(0, 50)}），800ms 后重试一次`, 'warn');
+            await new Promise((r) => setTimeout(r, 800));
+            continue;
+          }
+          const more = i < chain.length - 1;
+          if (more && retryable) {
+            onLog?.(`${provider.id} 不可用（${e.message.slice(0, 60)}），尝试下一个…`, 'warn');
+            break;   // 跳出重试，去试下一个提供商
+          }
+          throw e;
         }
-        throw e;
       }
     }
     throw lastErr || new Error('所有提供商均调用失败');
